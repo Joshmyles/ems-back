@@ -3097,6 +3097,65 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates incident attributes",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Incidents"
+                ],
+                "summary": "Update incident",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Incident ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Incident update payload",
+                        "name": "payload",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/dispatch_internal_modules_incidents_application.UpdateIncidentRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    }
+                }
             }
         },
         "/incidents/{id}/status": {
@@ -6420,6 +6479,128 @@ const docTemplate = `{
                     "type": "string"
                 },
                 "response_value": {
+                    "type": "string"
+                }
+            }
+        },
+        "dispatch_internal_modules_incidents_application.UpdateIncidentRequest": {
+            "type": "object",
+            "properties": {
+                "caller_name": {
+                    "type": "string"
+                },
+                "caller_phone": {
+                    "type": "string"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "district_id": {
+                    "type": "string"
+                },
+                "facility_id": {
+                    "type": "string"
+                },
+                "incident_type_id": {
+                    "type": "string"
+                },
+                "landmark": {
+                    "type": "string"
+                },
+                "latitude": {
+                    "type": "number"
+                },
+                "longitude": {
+                    "type": "number"
+                },
+                "notes": {
+                    "type": "string"
+                },
+                "parish": {
+                    "type": "string"
+                },
+                "patient_age_group": {
+                    "type": "string"
+                },
+                "patient_name": {
+                    "type": "string"
+                },
+                "patient_phone": {
+                    "type": "string"
+                },
+                "patient_sex": {
+                    "type": "string",
+                    "enum": [
+                        "MALE",
+                        "FEMALE",
+                        "OTHER",
+                        "UNKNOWN"
+                    ]
+                },
+                "priority_level_id": {
+                    "type": "string"
+                },
+                "questionnaire_code": {
+                    "type": "string"
+                },
+                "reported_at": {
+                    "type": "string"
+                },
+                "severity_level_id": {
+                    "type": "string"
+                },
+                "source_channel": {
+                    "type": "string",
+                    "enum": [
+                        "SMS",
+                        "USSD",
+                        "CALL",
+                        "MOBILE_APP",
+                        "WEB_PORTAL",
+                        "FACILITY_REFERRAL"
+                    ]
+                },
+                "status": {
+                    "type": "string",
+                    "enum": [
+                        "NEW",
+                        "PENDING_VERIFICATION",
+                        "VERIFIED",
+                        "AWAITING_ASSIGNMENT",
+                        "ASSIGNED",
+                        "ENROUTE",
+                        "AT_SCENE",
+                        "TRANSPORTING",
+                        "COMPLETED",
+                        "CANCELLED",
+                        "ESCALATED",
+                        "REJECTED"
+                    ]
+                },
+                "subcounty": {
+                    "type": "string"
+                },
+                "summary": {
+                    "type": "string"
+                },
+                "triage_notes": {
+                    "type": "string"
+                },
+                "triage_responses": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dispatch_internal_modules_incidents_application.TriageResponseInput"
+                    }
+                },
+                "verification_status": {
+                    "type": "string",
+                    "enum": [
+                        "PENDING",
+                        "VERIFIED",
+                        "REJECTED"
+                    ]
+                },
+                "village": {
                     "type": "string"
                 }
             }

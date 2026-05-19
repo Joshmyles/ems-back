@@ -69,7 +69,7 @@ docker-up:
 
 .PHONY: docker-down
 docker-down:
-	docker compose -f deployments/docker/docker-compose.yml down -v
+	docker compose -f deployments/docker/docker-compose.yml down -v --remove-orphans
 
 .PHONY: docker-logs
 docker-logs:

@@ -37,6 +37,13 @@ func nilIfBlank(s *string) *string {
 	return &v
 }
 
+func trimmedValue(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return strings.TrimSpace(*s)
+}
+
 func (r *Repository) CreateIncident(ctx context.Context, in incidentdomain.Incident) (incidentdomain.Incident, error) {
 	// normalize optional UUID fields
 	in.FacilityID = nilIfBlank(in.FacilityID)
@@ -172,6 +179,169 @@ func (r *Repository) ListIncidents(ctx context.Context, params incidentapp.ListI
 		items = append(items, out)
 	}
 	return items, total, rows.Err()
+}
+
+func (r *Repository) UpdateIncident(ctx context.Context, id string, req incidentapp.UpdateIncidentRequest) (incidentdomain.Incident, error) {
+	sets := make([]string, 0)
+	args := make([]any, 0)
+	pos := 1
+
+	var current incidentdomain.Incident
+	var effectiveLat, effectiveLon *float64
+	if req.Latitude != nil || req.Longitude != nil {
+		var err error
+		current, err = r.GetIncidentByID(ctx, id)
+		if err != nil {
+			return incidentdomain.Incident{}, err
+		}
+		effectiveLat = current.Latitude
+		effectiveLon = current.Longitude
+	}
+
+	if req.SourceChannel != nil {
+		sets = append(sets, fmt.Sprintf("source_channel = $%d", pos))
+		args = append(args, strings.ToUpper(trimmedValue(req.SourceChannel)))
+		pos++
+	}
+	if req.CallerName != nil {
+		sets = append(sets, fmt.Sprintf("caller_name = $%d", pos))
+		args = append(args, trimmedValue(req.CallerName))
+		pos++
+	}
+	if req.CallerPhone != nil {
+		sets = append(sets, fmt.Sprintf("caller_phone = $%d", pos))
+		args = append(args, trimmedValue(req.CallerPhone))
+		pos++
+	}
+	if req.PatientName != nil {
+		sets = append(sets, fmt.Sprintf("patient_name = $%d", pos))
+		args = append(args, trimmedValue(req.PatientName))
+		pos++
+	}
+	if req.PatientPhone != nil {
+		sets = append(sets, fmt.Sprintf("patient_phone = $%d", pos))
+		args = append(args, trimmedValue(req.PatientPhone))
+		pos++
+	}
+	if req.PatientAgeGroup != nil {
+		sets = append(sets, fmt.Sprintf("patient_age_group = $%d", pos))
+		args = append(args, trimmedValue(req.PatientAgeGroup))
+		pos++
+	}
+	if req.PatientSex != nil {
+		sets = append(sets, fmt.Sprintf("patient_sex = $%d", pos))
+		args = append(args, strings.ToUpper(trimmedValue(req.PatientSex)))
+		pos++
+	}
+	if req.IncidentTypeID != nil {
+		sets = append(sets, fmt.Sprintf("incident_type_id = $%d", pos))
+		args = append(args, trimmedValue(req.IncidentTypeID))
+		pos++
+	}
+	if req.SeverityLevelID != nil {
+		sets = append(sets, fmt.Sprintf("severity_level_id = $%d", pos))
+		args = append(args, nilIfBlank(req.SeverityLevelID))
+		pos++
+	}
+	if req.PriorityLevelID != nil {
+		sets = append(sets, fmt.Sprintf("priority_level_id = $%d", pos))
+		args = append(args, nilIfBlank(req.PriorityLevelID))
+		pos++
+	}
+	if req.Summary != nil {
+		sets = append(sets, fmt.Sprintf("summary = $%d", pos))
+		args = append(args, trimmedValue(req.Summary))
+		pos++
+	}
+	if req.Description != nil {
+		sets = append(sets, fmt.Sprintf("description = $%d", pos))
+		args = append(args, trimmedValue(req.Description))
+		pos++
+	}
+	if req.DistrictID != nil {
+		sets = append(sets, fmt.Sprintf("district_id = $%d", pos))
+		args = append(args, nilIfBlank(req.DistrictID))
+		pos++
+	}
+	if req.FacilityID != nil {
+		sets = append(sets, fmt.Sprintf("facility_id = $%d", pos))
+		args = append(args, nilIfBlank(req.FacilityID))
+		pos++
+	}
+	if req.Village != nil {
+		sets = append(sets, fmt.Sprintf("village = $%d", pos))
+		args = append(args, trimmedValue(req.Village))
+		pos++
+	}
+	if req.Parish != nil {
+		sets = append(sets, fmt.Sprintf("parish = $%d", pos))
+		args = append(args, trimmedValue(req.Parish))
+		pos++
+	}
+	if req.Subcounty != nil {
+		sets = append(sets, fmt.Sprintf("subcounty = $%d", pos))
+		args = append(args, trimmedValue(req.Subcounty))
+		pos++
+	}
+	if req.Landmark != nil {
+		sets = append(sets, fmt.Sprintf("landmark = $%d", pos))
+		args = append(args, trimmedValue(req.Landmark))
+		pos++
+	}
+	if req.Latitude != nil {
+		sets = append(sets, fmt.Sprintf("latitude = $%d", pos))
+		args = append(args, *req.Latitude)
+		effectiveLat = req.Latitude
+		pos++
+	}
+	if req.Longitude != nil {
+		sets = append(sets, fmt.Sprintf("longitude = $%d", pos))
+		args = append(args, *req.Longitude)
+		effectiveLon = req.Longitude
+		pos++
+	}
+	if req.Latitude != nil || req.Longitude != nil {
+		sets = append(sets, fmt.Sprintf("location = CASE WHEN $%d::float8 IS NULL OR $%d::float8 IS NULL THEN NULL ELSE ST_SetSRID(ST_MakePoint($%d, $%d), 4326)::geography END", pos, pos+1, pos+1, pos))
+		var latArg any
+		var lonArg any
+		if effectiveLat != nil {
+			latArg = *effectiveLat
+		}
+		if effectiveLon != nil {
+			lonArg = *effectiveLon
+		}
+		args = append(args, latArg, lonArg)
+		pos += 2
+	}
+	if req.VerificationStatus != nil {
+		sets = append(sets, fmt.Sprintf("verification_status = $%d", pos))
+		args = append(args, strings.ToUpper(trimmedValue(req.VerificationStatus)))
+		pos++
+	}
+	if req.Status != nil {
+		sets = append(sets, fmt.Sprintf("status = $%d", pos))
+		args = append(args, strings.ToUpper(trimmedValue(req.Status)))
+		sets = append(sets, fmt.Sprintf("closed_at = CASE WHEN $%d IN ('COMPLETED','CANCELLED','REJECTED') THEN now() ELSE closed_at END", pos))
+		pos++
+	}
+	if req.ReportedAt != nil {
+		sets = append(sets, fmt.Sprintf("reported_at = $%d", pos))
+		args = append(args, req.ReportedAt.UTC())
+		pos++
+	}
+
+	if len(sets) == 0 {
+		return r.GetIncidentByID(ctx, id)
+	}
+
+	sets = append(sets, "updated_at = now()")
+	args = append(args, id)
+
+	query := fmt.Sprintf("UPDATE incidents SET %s WHERE id = $%d", strings.Join(sets, ", "), pos)
+	if _, err := r.db.Exec(ctx, query, args...); err != nil {
+		return incidentdomain.Incident{}, err
+	}
+	return r.GetIncidentByID(ctx, id)
 }
 
 func (r *Repository) UpdateIncidentStatus(ctx context.Context, id, status string) (incidentdomain.Incident, error) {

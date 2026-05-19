@@ -1,3 +1,4 @@
+name: ems-backend
 services:
   postgres:
     image: kartoza/postgis:16-3.4

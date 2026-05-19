@@ -665,6 +665,94 @@ definitions:
     - question_code
     - response_value
     type: object
+  dispatch_internal_modules_incidents_application.UpdateIncidentRequest:
+    properties:
+      caller_name:
+        type: string
+      caller_phone:
+        type: string
+      description:
+        type: string
+      district_id:
+        type: string
+      facility_id:
+        type: string
+      incident_type_id:
+        type: string
+      landmark:
+        type: string
+      latitude:
+        type: number
+      longitude:
+        type: number
+      notes:
+        type: string
+      parish:
+        type: string
+      patient_age_group:
+        type: string
+      patient_name:
+        type: string
+      patient_phone:
+        type: string
+      patient_sex:
+        enum:
+        - MALE
+        - FEMALE
+        - OTHER
+        - UNKNOWN
+        type: string
+      priority_level_id:
+        type: string
+      questionnaire_code:
+        type: string
+      reported_at:
+        type: string
+      severity_level_id:
+        type: string
+      source_channel:
+        enum:
+        - SMS
+        - USSD
+        - CALL
+        - MOBILE_APP
+        - WEB_PORTAL
+        - FACILITY_REFERRAL
+        type: string
+      status:
+        enum:
+        - NEW
+        - PENDING_VERIFICATION
+        - VERIFIED
+        - AWAITING_ASSIGNMENT
+        - ASSIGNED
+        - ENROUTE
+        - AT_SCENE
+        - TRANSPORTING
+        - COMPLETED
+        - CANCELLED
+        - ESCALATED
+        - REJECTED
+        type: string
+      subcounty:
+        type: string
+      summary:
+        type: string
+      triage_notes:
+        type: string
+      triage_responses:
+        items:
+          $ref: '#/definitions/dispatch_internal_modules_incidents_application.TriageResponseInput'
+        type: array
+      verification_status:
+        enum:
+        - PENDING
+        - VERIFIED
+        - REJECTED
+        type: string
+      village:
+        type: string
+    type: object
   dispatch_internal_modules_incidents_application.UpdateIncidentStatusRequest:
     properties:
       notes:
@@ -3039,6 +3127,45 @@ paths:
       security:
       - BearerAuth: []
       summary: Get incident by ID
+      tags:
+      - Incidents
+    put:
+      consumes:
+      - application/json
+      description: Updates incident attributes
+      parameters:
+      - description: Incident ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Incident update payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dispatch_internal_modules_incidents_application.UpdateIncidentRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Update incident
       tags:
       - Incidents
   /incidents/{id}/status:

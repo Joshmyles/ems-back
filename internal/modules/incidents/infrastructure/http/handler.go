@@ -89,6 +89,38 @@ func (h *Handler) List(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
+// Update godoc
+//
+//	@Summary		Update incident
+//	@Description	Updates incident attributes
+//	@Tags			Incidents
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string							true	"Incident ID"
+//	@Param			payload	body		incidentapp.UpdateIncidentRequest	true	"Incident update payload"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/incidents/{id} [put]
+func (h *Handler) Update(c *gin.Context) {
+	var req incidentapp.UpdateIncidentRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	var actorUserID *string
+	if v := c.GetString("user_id"); v != "" {
+		actorUserID = &v
+	}
+	out, err := h.service.UpdateIncident(c.Request.Context(), c.Param("id"), req, actorUserID)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
 // UpdateStatus godoc
 //
 //	@Summary		Update incident status

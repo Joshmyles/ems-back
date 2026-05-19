@@ -17,6 +17,7 @@ type Repository interface {
 	CreateIncident(ctx context.Context, in incidentdomain.Incident) (incidentdomain.Incident, error)
 	GetIncidentByID(ctx context.Context, id string) (incidentdomain.Incident, error)
 	ListIncidents(ctx context.Context, params ListIncidentsParams) ([]incidentdomain.Incident, int64, error)
+	UpdateIncident(ctx context.Context, id string, req UpdateIncidentRequest) (incidentdomain.Incident, error)
 	UpdateIncidentStatus(ctx context.Context, id, status string) (incidentdomain.Incident, error)
 	CreateIncidentUpdate(ctx context.Context, incidentID, updateType, oldValue, newValue, notes string, actorUserID *string) error
 	NextIncidentNumber(ctx context.Context) (string, error)

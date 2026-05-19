@@ -76,7 +76,7 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 	resp := CreateIncidentResponse{
 		Incident:                   created,
 		AutoDispatchEligible:       false,
-		DispatchRecommendationHint: "manual review",
+		DispatchRecommendationHint: buildDispatchRecommendationHint(false, created.PriorityCode),
 	}
 
 	if len(req.TriageResponses) > 0 {
@@ -84,7 +84,7 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 		if questionnaireCode == "" {
 			questionnaireCode = "EMS_PRIMARY_TRIAGE"
 		}
-		triage, triageErr := s.persistTriageOnCreate(ctx, created.ID, questionnaireCode, req.TriageResponses, req.TriageNotes, req.CreatedByUserID)
+		triage, triageErr := s.persistTriage(ctx, created.ID, questionnaireCode, req.TriageResponses, req.TriageNotes, req.CreatedByUserID, "triage persisted on incident creation")
 		if triageErr != nil {
 			return CreateIncidentResponse{}, triageErr
 		}
@@ -92,11 +92,7 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 		resp.Incident = updatedIncident
 		resp.TriageSession = &triage
 		resp.AutoDispatchEligible = triage.AutoDispatchEligible
-		if triage.AutoDispatchEligible || triage.DerivedPriorityCode == "RED" || triage.DerivedPriorityCode == "ORANGE" {
-			resp.DispatchRecommendationHint = "eligible for dispatch recommendations"
-		} else {
-			resp.DispatchRecommendationHint = "manual review"
-		}
+		resp.DispatchRecommendationHint = buildDispatchRecommendationHint(triage.AutoDispatchEligible, triage.DerivedPriorityCode)
 	}
 
 	_ = s.bus.Publish(ctx, "incident.created", events.Event{
@@ -117,7 +113,7 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 	return resp, nil
 }
 
-func (s *Service) persistTriageOnCreate(ctx context.Context, incidentID, questionnaireCode string, inputs []TriageResponseInput, notes string, actorUserID *string) (incidentdomain.PersistedTriageSession, error) {
+func (s *Service) persistTriage(ctx context.Context, incidentID, questionnaireCode string, inputs []TriageResponseInput, notes string, actorUserID *string, auditMessage string) (incidentdomain.PersistedTriageSession, error) {
 	questionnaireID, err := s.repo.ResolveQuestionnaireIDByCode(ctx, questionnaireCode)
 	if err != nil {
 		return incidentdomain.PersistedTriageSession{}, err
@@ -228,7 +224,7 @@ func (s *Service) persistTriageOnCreate(ctx context.Context, incidentID, questio
 	if created.AutoDispatchEligible || priorityCode == "RED" || priorityCode == "ORANGE" {
 		_, _ = s.repo.UpdateIncidentStatus(ctx, incidentID, "AWAITING_ASSIGNMENT")
 	}
-	_ = s.repo.CreateIncidentUpdate(ctx, incidentID, "TRIAGE", "", priorityCode, fmt.Sprintf("triage persisted on incident creation: score=%d, boolean_true_count=%d", totalScore, booleanTrueCount), actorUserID)
+	_ = s.repo.CreateIncidentUpdate(ctx, incidentID, "TRIAGE", "", priorityCode, fmt.Sprintf("%s: score=%d, boolean_true_count=%d", auditMessage, totalScore, booleanTrueCount), actorUserID)
 	return created, nil
 }
 
@@ -251,4 +247,139 @@ func (s *Service) UpdateIncidentStatus(ctx context.Context, id string, req Updat
 	}
 	_ = s.repo.CreateIncidentUpdate(ctx, id, "STATUS_CHANGE", "", updated.Status, req.Notes, actorUserID)
 	return updated, nil
+}
+
+func (s *Service) UpdateIncident(ctx context.Context, id string, req UpdateIncidentRequest, actorUserID *string) (UpdateIncidentResponse, error) {
+	current, err := s.repo.GetIncidentByID(ctx, id)
+	if err != nil {
+		return UpdateIncidentResponse{}, err
+	}
+	updated, err := s.repo.UpdateIncident(ctx, id, req)
+	if err != nil {
+		return UpdateIncidentResponse{}, err
+	}
+	s.recordIncidentAttributeChanges(ctx, id, current, updated, req.Notes, actorUserID)
+
+	resp := UpdateIncidentResponse{
+		Incident:                   updated,
+		AutoDispatchEligible:       false,
+		DispatchRecommendationHint: buildDispatchRecommendationHint(false, updated.PriorityCode),
+	}
+
+	if len(req.TriageResponses) > 0 {
+		questionnaireCode := strings.ToUpper(strings.TrimSpace(req.QuestionnaireCode))
+		if questionnaireCode == "" {
+			questionnaireCode = "EMS_PRIMARY_TRIAGE"
+		}
+		triage, triageErr := s.persistTriage(ctx, id, questionnaireCode, req.TriageResponses, req.TriageNotes, actorUserID, "triage persisted during incident update")
+		if triageErr != nil {
+			return UpdateIncidentResponse{}, triageErr
+		}
+		refreshed, refreshErr := s.repo.GetIncidentByID(ctx, id)
+		if refreshErr != nil {
+			return UpdateIncidentResponse{}, refreshErr
+		}
+		resp.Incident = refreshed
+		resp.TriageSession = &triage
+		resp.AutoDispatchEligible = triage.AutoDispatchEligible
+		resp.DispatchRecommendationHint = buildDispatchRecommendationHint(triage.AutoDispatchEligible, triage.DerivedPriorityCode)
+	}
+
+	return resp, nil
+}
+
+func (s *Service) recordIncidentAttributeChanges(ctx context.Context, incidentID string, before, after incidentdomain.Incident, notes string, actorUserID *string) {
+	type fieldChange struct {
+		field      string
+		updateType string
+		oldValue   string
+		newValue   string
+	}
+
+	changes := []fieldChange{
+		{field: "source_channel", updateType: "COMMENT", oldValue: before.SourceChannel, newValue: after.SourceChannel},
+		{field: "caller_name", updateType: "COMMENT", oldValue: before.CallerName, newValue: after.CallerName},
+		{field: "caller_phone", updateType: "COMMENT", oldValue: before.CallerPhone, newValue: after.CallerPhone},
+		{field: "patient_name", updateType: "COMMENT", oldValue: before.PatientName, newValue: after.PatientName},
+		{field: "patient_phone", updateType: "COMMENT", oldValue: before.PatientPhone, newValue: after.PatientPhone},
+		{field: "patient_age_group", updateType: "COMMENT", oldValue: before.PatientAgeGroup, newValue: after.PatientAgeGroup},
+		{field: "patient_sex", updateType: "COMMENT", oldValue: before.PatientSex, newValue: after.PatientSex},
+		{field: "incident_type_id", updateType: "COMMENT", oldValue: before.IncidentTypeID, newValue: after.IncidentTypeID},
+		{field: "severity_level_id", updateType: "COMMENT", oldValue: stringValue(before.SeverityLevelID), newValue: stringValue(after.SeverityLevelID)},
+		{field: "priority_level_id", updateType: "COMMENT", oldValue: stringValue(before.PriorityLevelID), newValue: stringValue(after.PriorityLevelID)},
+		{field: "summary", updateType: "COMMENT", oldValue: before.Summary, newValue: after.Summary},
+		{field: "description", updateType: "COMMENT", oldValue: before.Description, newValue: after.Description},
+		{field: "district_id", updateType: "LOCATION_UPDATE", oldValue: stringValue(before.DistrictID), newValue: stringValue(after.DistrictID)},
+		{field: "facility_id", updateType: "LOCATION_UPDATE", oldValue: stringValue(before.FacilityID), newValue: stringValue(after.FacilityID)},
+		{field: "village", updateType: "LOCATION_UPDATE", oldValue: before.Village, newValue: after.Village},
+		{field: "parish", updateType: "LOCATION_UPDATE", oldValue: before.Parish, newValue: after.Parish},
+		{field: "subcounty", updateType: "LOCATION_UPDATE", oldValue: before.Subcounty, newValue: after.Subcounty},
+		{field: "landmark", updateType: "LOCATION_UPDATE", oldValue: before.Landmark, newValue: after.Landmark},
+		{field: "latitude", updateType: "LOCATION_UPDATE", oldValue: floatValue(before.Latitude), newValue: floatValue(after.Latitude)},
+		{field: "longitude", updateType: "LOCATION_UPDATE", oldValue: floatValue(before.Longitude), newValue: floatValue(after.Longitude)},
+		{field: "verification_status", updateType: "VERIFICATION", oldValue: before.VerificationStatus, newValue: after.VerificationStatus},
+		{field: "status", updateType: "STATUS_CHANGE", oldValue: before.Status, newValue: after.Status},
+		{field: "reported_at", updateType: "COMMENT", oldValue: timeValue(before.ReportedAt), newValue: timePointerValue(after.ReportedAt)},
+	}
+
+	changed := false
+	for _, change := range changes {
+		if change.oldValue == change.newValue {
+			continue
+		}
+		changed = true
+		_ = s.repo.CreateIncidentUpdate(
+			ctx,
+			incidentID,
+			change.updateType,
+			change.oldValue,
+			change.newValue,
+			buildIncidentChangeNote(change.field, notes),
+			actorUserID,
+		)
+	}
+
+	if !changed && strings.TrimSpace(notes) != "" {
+		_ = s.repo.CreateIncidentUpdate(ctx, incidentID, "COMMENT", "", "", strings.TrimSpace(notes), actorUserID)
+	}
+}
+
+func buildIncidentChangeNote(field, notes string) string {
+	base := strings.ReplaceAll(field, "_", " ") + " updated"
+	if strings.TrimSpace(notes) == "" {
+		return base
+	}
+	return base + ": " + strings.TrimSpace(notes)
+}
+
+func stringValue(v *string) string {
+	if v == nil {
+		return ""
+	}
+	return *v
+}
+
+func floatValue(v *float64) string {
+	if v == nil {
+		return ""
+	}
+	return strconv.FormatFloat(*v, 'f', -1, 64)
+}
+
+func timeValue(v time.Time) string {
+	if v.IsZero() {
+		return ""
+	}
+	return v.UTC().Format(time.RFC3339)
+}
+
+func timePointerValue(v time.Time) string {
+	return timeValue(v)
+}
+
+func buildDispatchRecommendationHint(autoDispatch bool, priorityCode string) string {
+	if autoDispatch || priorityCode == "RED" || priorityCode == "ORANGE" {
+		return "eligible for dispatch recommendations"
+	}
+	return "manual review"
 }
