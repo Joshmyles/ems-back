@@ -19,6 +19,10 @@ services:
       interval: 10s
       timeout: 5s
       retries: 10
+      # kartoza/postgis runs initdb + PostGIS extension setup on first boot,
+      # which can take 30-90s. Without start_period, pg_isready failures during
+      # that window burn through retries and the container is marked unhealthy.
+      start_period: 90s
 
   redis:
     image: redis:8.6.1-alpine
