@@ -22,7 +22,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 var _ fleetapp.Repository = (*Repository)(nil)
 
-func (r *Repository) ListAmbulances(ctx context.Context, p platformdb.Pagination) ([]domain.Ambulance, int64, error) {
+func (r *Repository) ListAmbulances(ctx context.Context, p platformdb.Pagination, driverUserID *string) ([]domain.Ambulance, int64, error) {
 	allowedSorts := map[string]string{
 		"created_at":         "a.created_at",
 		"plate_number":       "a.plate_number",
@@ -33,6 +33,17 @@ func (r *Repository) ListAmbulances(ctx context.Context, p platformdb.Pagination
 	where := []string{"1=1"}
 	args := make([]any, 0)
 	argPos := 1
+
+	if driverUserID != nil && *driverUserID != "" {
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM ambulance_crew_assignments ca2
+			WHERE ca2.ambulance_id = a.id
+			  AND ca2.driver_user_id = $%d
+			  AND ca2.active = TRUE
+		)`, argPos))
+		args = append(args, *driverUserID)
+		argPos++
+	}
 
 	if p.Search != "" {
 		where = append(where, fmt.Sprintf(`(
@@ -174,8 +185,8 @@ func (r *Repository) ListAmbulances(ctx context.Context, p platformdb.Pagination
 	return items, total, rows.Err()
 }
 
-func (r *Repository) GetByID(ctx context.Context, id string) (domain.Ambulance, error) {
-	const q = `
+func (r *Repository) GetByID(ctx context.Context, id string, driverUserID *string) (domain.Ambulance, error) {
+	baseQuery := `
 SELECT
 	a.id,
 	a.code,
@@ -206,8 +217,21 @@ LEFT JOIN ambulance_crew_assignments ca
 LEFT JOIN users du
 	ON du.id = ca.driver_user_id
 WHERE a.id = $1`
+
+	args := []any{id}
+	q := baseQuery
+	if driverUserID != nil && *driverUserID != "" {
+		q = baseQuery + ` AND EXISTS (
+			SELECT 1 FROM ambulance_crew_assignments ca2
+			WHERE ca2.ambulance_id = a.id
+			  AND ca2.driver_user_id = $2
+			  AND ca2.active = TRUE
+		)`
+		args = append(args, *driverUserID)
+	}
+
 	var a domain.Ambulance
-	if err := r.db.QueryRow(ctx, q, id).Scan(
+	if err := r.db.QueryRow(ctx, q, args...).Scan(
 		&a.ID,
 		&a.Code,
 		&a.PlateNumber,
@@ -271,7 +295,7 @@ RETURNING id`
 	).Scan(&id); err != nil {
 		return domain.Ambulance{}, err
 	}
-	return r.GetByID(ctx, id)
+	return r.GetByID(ctx, id, nil)
 }
 
 func (r *Repository) Update(ctx context.Context, id string, req fleetapp.UpdateAmbulanceRequest) (domain.Ambulance, error) {
@@ -335,7 +359,7 @@ func (r *Repository) Update(ctx context.Context, id string, req fleetapp.UpdateA
 		pos++
 	}
 	if len(sets) == 0 {
-		return r.GetByID(ctx, id)
+		return r.GetByID(ctx, id, nil)
 	}
 	sets = append(sets, "updated_at = now()")
 	args = append(args, id)
@@ -343,7 +367,7 @@ func (r *Repository) Update(ctx context.Context, id string, req fleetapp.UpdateA
 	if _, err := r.db.Exec(ctx, query, args...); err != nil {
 		return domain.Ambulance{}, err
 	}
-	return r.GetByID(ctx, id)
+	return r.GetByID(ctx, id, nil)
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {

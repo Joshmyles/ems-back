@@ -42,7 +42,7 @@ type CreateIncidentRequest struct {
 }
 
 type UpdateIncidentStatusRequest struct {
-	Status string `json:"status" binding:"required"`
+	Status string `json:"status" binding:"required,oneof=NEW PENDING_VERIFICATION VERIFIED AWAITING_ASSIGNMENT ASSIGNED ENROUTE AT_SCENE TRANSPORTING COMPLETED CANCELLED ESCALATED REJECTED"`
 	Notes  string `json:"notes"`
 }
 

@@ -37,12 +37,16 @@ func generatePublicToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (s *Service) List(ctx context.Context, p platformdb.Pagination) ([]domain.FuelLog, int64, error) {
-	return s.repo.List(ctx, p)
+// List returns fuel logs. When driverUserID is non-nil, the result is scoped
+// to fuel logs for ambulances the user is the active driver of.
+func (s *Service) List(ctx context.Context, p platformdb.Pagination, driverUserID *string) ([]domain.FuelLog, int64, error) {
+	return s.repo.List(ctx, p, driverUserID)
 }
 
-func (s *Service) Get(ctx context.Context, id string) (domain.FuelLog, error) {
-	return s.repo.GetByID(ctx, id)
+// Get returns a single fuel log. When driverUserID is non-nil, the lookup is
+// scoped so a driver cannot read fuel logs for ambulances they are not on.
+func (s *Service) Get(ctx context.Context, id string, driverUserID *string) (domain.FuelLog, error) {
+	return s.repo.GetByID(ctx, id, driverUserID)
 }
 
 func (s *Service) Create(ctx context.Context, req CreateFuelLogRequest, filledByUserID *string) (domain.FuelLog, error) {

@@ -14,3 +14,7 @@ type UpdateFacilityRequest struct {
 	Level        *string `json:"level,omitempty"`
 	Ownership    *string `json:"ownership,omitempty"`
 }
+
+type SetFocalPersonRequest struct {
+	UserID string `json:"user_id" binding:"required,uuid"`
+}

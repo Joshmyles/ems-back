@@ -9,8 +9,11 @@ import (
 	"dispatch/internal/modules/facilities/domain"
 	platformdb "dispatch/internal/platform/db"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+const focalPersonRoleCode = "FACILITY_FOCAL_PERSON"
 
 type Repository struct {
 	db *pgxpool.Pool
@@ -104,11 +107,18 @@ func (r *Repository) ListFacilities(ctx context.Context, p platformdb.Pagination
 			d.district_uid,
 			r.region,
 			d.district,
-			s.subcounty
+			s.subcounty,
+			f.focal_person_id::text,
+			u.username,
+			u.first_name,
+			u.last_name,
+			u.phone,
+			u.email
 		FROM facilities f
 		JOIN subcounties s ON s.subcounty_uid = f.subcounty_uid
 		JOIN districts d ON d.district_uid = s.district_uid
 		JOIN regions r ON r.region_uid = d.region_uid
+		LEFT JOIN users u ON u.id = f.focal_person_id
 		%s
 		%s
 		LIMIT $%d OFFSET $%d
@@ -123,6 +133,7 @@ func (r *Repository) ListFacilities(ctx context.Context, p platformdb.Pagination
 	items := make([]domain.Facility, 0)
 	for rows.Next() {
 		var f domain.Facility
+		var focalID, focalUsername, focalFirst, focalLast, focalPhone, focalEmail *string
 		if err := rows.Scan(
 			&f.FacilityUID,
 			&f.SubcountyUID,
@@ -134,8 +145,24 @@ func (r *Repository) ListFacilities(ctx context.Context, p platformdb.Pagination
 			&f.Region,
 			&f.District,
 			&f.Subcounty,
+			&focalID,
+			&focalUsername,
+			&focalFirst,
+			&focalLast,
+			&focalPhone,
+			&focalEmail,
 		); err != nil {
 			return nil, 0, err
+		}
+		if focalID != nil {
+			f.FocalPerson = &domain.FocalPerson{
+				UserID:    *focalID,
+				Username:  derefString(focalUsername),
+				FirstName: derefString(focalFirst),
+				LastName:  derefString(focalLast),
+				Phone:     derefString(focalPhone),
+				Email:     derefString(focalEmail),
+			}
 		}
 		items = append(items, f)
 	}
@@ -143,16 +170,26 @@ func (r *Repository) ListFacilities(ctx context.Context, p platformdb.Pagination
 	return items, total, rows.Err()
 }
 
+func derefString(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 func (r *Repository) GetByUID(ctx context.Context, uid string) (domain.Facility, error) {
 	const q = `
 SELECT f.facility_uid, f.subcounty_uid, f.facility, COALESCE(f.level,''), COALESCE(f.ownership,''),
-       r.region_uid, d.district_uid, r.region, d.district, s.subcounty
+       r.region_uid, d.district_uid, r.region, d.district, s.subcounty,
+       f.focal_person_id::text, u.username, u.first_name, u.last_name, u.phone, u.email
 FROM facilities f
 JOIN subcounties s ON s.subcounty_uid = f.subcounty_uid
 JOIN districts d ON d.district_uid = s.district_uid
 JOIN regions r ON r.region_uid = d.region_uid
+LEFT JOIN users u ON u.id = f.focal_person_id
 WHERE f.facility_uid = $1`
 	var f domain.Facility
+	var focalID, focalUsername, focalFirst, focalLast, focalPhone, focalEmail *string
 	err := r.db.QueryRow(ctx, q, uid).Scan(
 		&f.FacilityUID,
 		&f.SubcountyUID,
@@ -164,8 +201,27 @@ WHERE f.facility_uid = $1`
 		&f.Region,
 		&f.District,
 		&f.Subcounty,
+		&focalID,
+		&focalUsername,
+		&focalFirst,
+		&focalLast,
+		&focalPhone,
+		&focalEmail,
 	)
-	return f, err
+	if err != nil {
+		return f, err
+	}
+	if focalID != nil {
+		f.FocalPerson = &domain.FocalPerson{
+			UserID:    *focalID,
+			Username:  derefString(focalUsername),
+			FirstName: derefString(focalFirst),
+			LastName:  derefString(focalLast),
+			Phone:     derefString(focalPhone),
+			Email:     derefString(focalEmail),
+		}
+	}
+	return f, nil
 }
 
 func (r *Repository) Create(ctx context.Context, in domain.Facility) (domain.Facility, error) {
@@ -219,5 +275,94 @@ func (r *Repository) Update(ctx context.Context, uid string, req application.Upd
 
 func (r *Repository) Delete(ctx context.Context, uid string) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM facilities WHERE facility_uid = $1`, uid)
+	return err
+}
+
+func (r *Repository) SetFocalPerson(ctx context.Context, facilityUID string, userID string) (domain.Facility, error) {
+	err := platformdb.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		var previousUserID *string
+		if err := tx.QueryRow(ctx,
+			`SELECT focal_person_id::text FROM facilities WHERE facility_uid = $1 FOR UPDATE`,
+			facilityUID,
+		).Scan(&previousUserID); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE facilities SET focal_person_id = $1 WHERE facility_uid = $2`,
+			userID, facilityUID,
+		); err != nil {
+			return err
+		}
+
+		if previousUserID != nil && *previousUserID != userID {
+			if err := deactivateFacilityFocalRole(ctx, tx, *previousUserID, facilityUID); err != nil {
+				return err
+			}
+		}
+
+		return upsertFacilityFocalRole(ctx, tx, userID, facilityUID)
+	})
+	if err != nil {
+		return domain.Facility{}, err
+	}
+	return r.GetByUID(ctx, facilityUID)
+}
+
+func (r *Repository) ClearFocalPerson(ctx context.Context, facilityUID string) (domain.Facility, error) {
+	err := platformdb.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		var previousUserID *string
+		if err := tx.QueryRow(ctx,
+			`SELECT focal_person_id::text FROM facilities WHERE facility_uid = $1 FOR UPDATE`,
+			facilityUID,
+		).Scan(&previousUserID); err != nil {
+			return err
+		}
+
+		if _, err := tx.Exec(ctx,
+			`UPDATE facilities SET focal_person_id = NULL WHERE facility_uid = $1`,
+			facilityUID,
+		); err != nil {
+			return err
+		}
+
+		if previousUserID != nil {
+			return deactivateFacilityFocalRole(ctx, tx, *previousUserID, facilityUID)
+		}
+		return nil
+	})
+	if err != nil {
+		return domain.Facility{}, err
+	}
+	return r.GetByUID(ctx, facilityUID)
+}
+
+func upsertFacilityFocalRole(ctx context.Context, tx pgx.Tx, userID, facilityUID string) error {
+	var roleID string
+	if err := tx.QueryRow(ctx,
+		`SELECT id::text FROM roles WHERE code = $1`,
+		focalPersonRoleCode,
+	).Scan(&roleID); err != nil {
+		return fmt.Errorf("lookup focal-person role: %w", err)
+	}
+
+	_, err := tx.Exec(ctx, `
+		INSERT INTO user_roles (id, user_id, role_id, scope_type, scope_id, active, assigned_at)
+		VALUES (gen_random_uuid(), $1, $2, 'FACILITY', $3, TRUE, now())
+		ON CONFLICT (user_id, role_id, scope_type, scope_id)
+		DO UPDATE SET active = TRUE, assigned_at = now()
+	`, userID, roleID, facilityUID)
+	return err
+}
+
+func deactivateFacilityFocalRole(ctx context.Context, tx pgx.Tx, userID, facilityUID string) error {
+	_, err := tx.Exec(ctx, `
+		UPDATE user_roles
+		SET active = FALSE
+		WHERE user_id = $1
+		  AND scope_type = 'FACILITY'
+		  AND scope_id = $2
+		  AND role_id = (SELECT id FROM roles WHERE code = $3)
+	`, userID, facilityUID, focalPersonRoleCode)
 	return err
 }

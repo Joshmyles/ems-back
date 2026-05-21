@@ -145,6 +145,58 @@ func (h *Handler) Update(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
+// SetFocalPerson godoc
+//
+//	@Summary		Set facility focal person
+//	@Description	Assign or replace the focal person for a facility (one per facility)
+//	@Tags			Facilities
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			uid		path		string							true	"Facility UID"
+//	@Param			payload	body		facapp.SetFocalPersonRequest	true	"Focal person payload"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		404		{object}	map[string]interface{}
+//	@Failure		500		{object}	map[string]interface{}
+//	@Router			/facilities/{uid}/focal-person [put]
+func (h *Handler) SetFocalPerson(c *gin.Context) {
+	uid := c.Param("uid")
+	var req facapp.SetFocalPersonRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	out, err := h.service.SetFocalPerson(c.Request.Context(), uid, req)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+// ClearFocalPerson godoc
+//
+//	@Summary		Clear facility focal person
+//	@Description	Remove the focal person from a facility
+//	@Tags			Facilities
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			uid	path		string	true	"Facility UID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		404	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/facilities/{uid}/focal-person [delete]
+func (h *Handler) ClearFocalPerson(c *gin.Context) {
+	uid := c.Param("uid")
+	out, err := h.service.ClearFocalPerson(c.Request.Context(), uid)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
 // Delete godoc
 //
 //	@Summary		Delete facility

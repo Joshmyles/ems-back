@@ -29,4 +29,15 @@ type Facility struct {
 	Region      string `json:"region"`
 	District    string `json:"district"`
 	Subcounty   string `json:"subcounty"`
+
+	FocalPerson *FocalPerson `json:"focal_person,omitempty"`
+}
+
+type FocalPerson struct {
+	UserID    string `json:"user_id"`
+	Username  string `json:"username"`
+	FirstName string `json:"first_name"`
+	LastName  string `json:"last_name"`
+	Phone     string `json:"phone"`
+	Email     string `json:"email"`
 }

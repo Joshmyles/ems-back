@@ -96,7 +96,7 @@ func scanFuelLog(row rowScanner) (domain.FuelLog, error) {
 	return fl, nil
 }
 
-func (r *Repository) List(ctx context.Context, p platformdb.Pagination) ([]domain.FuelLog, int64, error) {
+func (r *Repository) List(ctx context.Context, p platformdb.Pagination, driverUserID *string) ([]domain.FuelLog, int64, error) {
 	allowedSorts := map[string]string{
 		"created_at":  "fl.created_at",
 		"filled_at":   "fl.filled_at",
@@ -108,6 +108,17 @@ func (r *Repository) List(ctx context.Context, p platformdb.Pagination) ([]domai
 	where := []string{"1=1"}
 	args := make([]any, 0)
 	pos := 1
+
+	if driverUserID != nil && *driverUserID != "" {
+		where = append(where, fmt.Sprintf(`EXISTS (
+			SELECT 1 FROM ambulance_crew_assignments ca
+			WHERE ca.ambulance_id = fl.ambulance_id
+			  AND ca.driver_user_id = $%d
+			  AND ca.active = TRUE
+		)`, pos))
+		args = append(args, *driverUserID)
+		pos++
+	}
 
 	if p.Search != "" {
 		where = append(where, fmt.Sprintf(`(
@@ -170,7 +181,18 @@ LIMIT $%d OFFSET $%d
 	return items, total, rows.Err()
 }
 
-func (r *Repository) GetByID(ctx context.Context, id string) (domain.FuelLog, error) {
+func (r *Repository) GetByID(ctx context.Context, id string, driverUserID *string) (domain.FuelLog, error) {
+	if driverUserID != nil && *driverUserID != "" {
+		q := fmt.Sprintf(`SELECT%s FROM fuel_logs fl
+WHERE fl.id = $1
+  AND EXISTS (
+      SELECT 1 FROM ambulance_crew_assignments ca
+      WHERE ca.ambulance_id = fl.ambulance_id
+        AND ca.driver_user_id = $2
+        AND ca.active = TRUE
+  )`, fuelLogColumns)
+		return scanFuelLog(r.db.QueryRow(ctx, q, id, *driverUserID))
+	}
 	q := fmt.Sprintf(`SELECT%s FROM fuel_logs fl WHERE fl.id = $1`, fuelLogColumns)
 	return scanFuelLog(r.db.QueryRow(ctx, q, id))
 }
@@ -209,7 +231,7 @@ RETURNING id`
 	).Scan(&id); err != nil {
 		return domain.FuelLog{}, err
 	}
-	return r.GetByID(ctx, id)
+	return r.GetByID(ctx, id, nil)
 }
 
 func (r *Repository) Update(ctx context.Context, id string, req fuelapp.UpdateFuelLogRequest) (domain.FuelLog, error) {
@@ -254,7 +276,7 @@ func (r *Repository) Update(ctx context.Context, id string, req fuelapp.UpdateFu
 	}
 
 	if len(sets) == 0 {
-		return r.GetByID(ctx, id)
+		return r.GetByID(ctx, id, nil)
 	}
 
 	sets = append(sets, "updated_at = now()")
@@ -263,7 +285,7 @@ func (r *Repository) Update(ctx context.Context, id string, req fuelapp.UpdateFu
 	if _, err := r.db.Exec(ctx, q, args...); err != nil {
 		return domain.FuelLog{}, err
 	}
-	return r.GetByID(ctx, id)
+	return r.GetByID(ctx, id, nil)
 }
 
 func (r *Repository) Delete(ctx context.Context, id string) error {

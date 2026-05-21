@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -9,6 +10,31 @@ import (
 	platformdb "dispatch/internal/platform/db"
 	"dispatch/internal/platform/httpx"
 )
+
+// driverScopeUserID returns the user ID to scope ambulance reads to when the
+// caller's only role is DRIVER. A driver should only see the ambulance they
+// are the active driver on. Any non-DRIVER role grants the broader view and
+// this returns nil.
+func driverScopeUserID(c *gin.Context) *string {
+	rawRoles, _ := c.Get("roles")
+	roles, _ := rawRoles.([]string)
+	hasDriver := false
+	for _, r := range roles {
+		code := strings.ToUpper(strings.TrimSpace(r))
+		if code == "DRIVER" {
+			hasDriver = true
+			continue
+		}
+		return nil
+	}
+	if !hasDriver {
+		return nil
+	}
+	if uid := c.GetString("user_id"); uid != "" {
+		return &uid
+	}
+	return nil
+}
 
 type Handler struct {
 	service *fleetapp.Service
@@ -57,7 +83,7 @@ func (h *Handler) List(c *gin.Context) {
 			"date_to":            {},
 		},
 	)
-	out, err := h.service.ListAmbulances(c.Request.Context(), p)
+	out, err := h.service.ListAmbulances(c.Request.Context(), p, driverScopeUserID(c))
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, err.Error())
 		return
@@ -78,7 +104,7 @@ func (h *Handler) List(c *gin.Context) {
 //	@Router			/ambulances/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	id := c.Param("id")
-	out, err := h.service.GetAmbulance(c.Request.Context(), id)
+	out, err := h.service.GetAmbulance(c.Request.Context(), id, driverScopeUserID(c))
 	if err != nil {
 		httpx.Error(c, http.StatusNotFound, err.Error())
 		return

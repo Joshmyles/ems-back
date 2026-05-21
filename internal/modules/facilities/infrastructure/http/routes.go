@@ -13,4 +13,6 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, rbacSvc *rbacapp.Service) {
 	rg.POST("", rbacmiddleware.RequirePermission(rbacSvc, "facilities.manage"), h.Create)
 	rg.PUT("/:uid", rbacmiddleware.RequirePermission(rbacSvc, "facilities.manage"), h.Update)
 	rg.DELETE("/:uid", rbacmiddleware.RequirePermission(rbacSvc, "facilities.manage"), h.Delete)
+	rg.PUT("/:uid/focal-person", rbacmiddleware.RequirePermission(rbacSvc, "facilities.manage"), h.SetFocalPerson)
+	rg.DELETE("/:uid/focal-person", rbacmiddleware.RequirePermission(rbacSvc, "facilities.manage"), h.ClearFocalPerson)
 }

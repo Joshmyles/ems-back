@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	fuelapp "dispatch/internal/modules/fuel/application"
 	"dispatch/internal/modules/fuel/domain"
@@ -10,6 +11,31 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+// driverScopeUserID returns the user ID to scope fuel-log reads to when the
+// caller's only role is DRIVER. A driver should only see fuel logs for the
+// ambulance they are the active driver on. Any non-DRIVER role grants the
+// broader view and this returns nil.
+func driverScopeUserID(c *gin.Context) *string {
+	rawRoles, _ := c.Get("roles")
+	roles, _ := rawRoles.([]string)
+	hasDriver := false
+	for _, r := range roles {
+		code := strings.ToUpper(strings.TrimSpace(r))
+		if code == "DRIVER" {
+			hasDriver = true
+			continue
+		}
+		return nil
+	}
+	if !hasDriver {
+		return nil
+	}
+	if uid := c.GetString("user_id"); uid != "" {
+		return &uid
+	}
+	return nil
+}
 
 type Handler struct {
 	svc *fuelapp.Service
@@ -55,7 +81,7 @@ func (h *Handler) List(c *gin.Context) {
 		},
 	)
 
-	items, total, err := h.svc.List(c.Request.Context(), p)
+	items, total, err := h.svc.List(c.Request.Context(), p, driverScopeUserID(c))
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": "failed to list fuel logs"})
 		return
@@ -81,7 +107,7 @@ func (h *Handler) List(c *gin.Context) {
 //	@Router		/fuel/logs/{id} [get]
 func (h *Handler) Get(c *gin.Context) {
 	id := c.Param("id")
-	item, err := h.svc.Get(c.Request.Context(), id)
+	item, err := h.svc.Get(c.Request.Context(), id, driverScopeUserID(c))
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"message": "fuel log not found"})
 		return

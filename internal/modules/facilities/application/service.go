@@ -51,3 +51,11 @@ func (s *Service) UpdateFacility(ctx context.Context, uid string, req UpdateFaci
 func (s *Service) DeleteFacility(ctx context.Context, uid string) error {
 	return s.repo.Delete(ctx, uid)
 }
+
+func (s *Service) SetFocalPerson(ctx context.Context, facilityUID string, req SetFocalPersonRequest) (domain.Facility, error) {
+	return s.repo.SetFocalPerson(ctx, facilityUID, req.UserID)
+}
+
+func (s *Service) ClearFocalPerson(ctx context.Context, facilityUID string) (domain.Facility, error) {
+	return s.repo.ClearFocalPerson(ctx, facilityUID)
+}
