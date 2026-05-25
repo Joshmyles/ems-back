@@ -8,8 +8,8 @@ import (
 )
 
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler, rbacSvc *rbacapp.Service) {
-	rg.GET("", rbacmiddleware.RequirePermission(rbacSvc, "notifications.read"), h.ListMy)
-	rg.GET("/:id", rbacmiddleware.RequirePermission(rbacSvc, "notifications.read"), h.Get)
+	rg.GET("", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "notifications.read", "DRIVER", "MEDIC"), h.ListMy)
+	rg.GET("/:id", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "notifications.read", "DRIVER", "MEDIC"), h.Get)
 	rg.POST("", rbacmiddleware.RequirePermission(rbacSvc, "notifications.manage"), h.Create)
-	rg.POST("/:id/read", rbacmiddleware.RequirePermission(rbacSvc, "notifications.manage"), h.MarkRead)
+	rg.POST("/:id/read", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "notifications.manage", "DRIVER", "MEDIC"), h.MarkRead)
 }

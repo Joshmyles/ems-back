@@ -23,12 +23,13 @@ var (
 )
 
 type Service struct {
-	repo Repository
-	bus  events.Publisher
+	repo          Repository
+	bus           events.Publisher
+	notifications NotificationCreator
 }
 
-func NewService(repo Repository, bus events.Publisher) *Service {
-	return &Service{repo: repo, bus: bus}
+func NewService(repo Repository, bus events.Publisher, notifications NotificationCreator) *Service {
+	return &Service{repo: repo, bus: bus, notifications: notifications}
 }
 
 func (s *Service) CreateAssignment(ctx context.Context, req dto.CreateDispatchAssignmentRequest) (dispatchdomain.DispatchAssignment, error) {
@@ -60,6 +61,7 @@ func (s *Service) CreateAssignment(ctx context.Context, req dto.CreateDispatchAs
 	}
 	_ = s.repo.SetUserAvailabilityBusy(ctx, req.IncidentID, created.ID, req.AmbulanceID, req.DriverUserID, req.LeadMedicUserID)
 	_ = s.repo.CreateIncidentUpdate(ctx, req.IncidentID, "STATUS_CHANGE", "AWAITING_ASSIGNMENT", "ASSIGNED", "dispatch assignment created", req.AssignedByUserID)
+	s.notifyAssignmentRecipients(ctx, created)
 	_ = s.bus.Publish(ctx, "dispatch.assigned", events.Event{
 		ID:          uuid.NewString(),
 		Topic:       "dispatch.assigned",
@@ -70,10 +72,76 @@ func (s *Service) CreateAssignment(ctx context.Context, req dto.CreateDispatchAs
 			"dispatch_assignment_id": created.ID,
 			"incident_id":            created.IncidentID,
 			"ambulance_id":           created.AmbulanceID,
+			"driver_user_id":         created.DriverUserID,
+			"lead_medic_user_id":     created.LeadMedicUserID,
 			"assignment_mode":        created.AssignmentMode,
 		},
 	})
 	return created, nil
+}
+
+func (s *Service) notifyAssignmentRecipients(ctx context.Context, assignment dispatchdomain.DispatchAssignment) {
+	if s.notifications == nil {
+		return
+	}
+
+	recipients := uniqueUserIDs(assignment.DriverUserID, assignment.LeadMedicUserID)
+	if len(recipients) == 0 {
+		return
+	}
+
+	title := "Incident assigned"
+	body := fmt.Sprintf("You have been assigned to incident %s.", assignment.IncidentID)
+	entityType := "DISPATCH_ASSIGNMENT"
+	entityID := assignment.ID
+
+	for _, recipientID := range recipients {
+		recipientID := recipientID
+		_, _ = s.notifications.Create(
+			ctx,
+			"DISPATCH_ASSIGNMENT",
+			"IN_APP",
+			&recipientID,
+			nil,
+			nil,
+			&title,
+			&entityType,
+			body,
+			&entityID,
+		)
+		_, _ = s.notifications.Create(
+			ctx,
+			"DISPATCH_ASSIGNMENT",
+			"PUSH",
+			&recipientID,
+			nil,
+			nil,
+			&title,
+			&entityType,
+			body,
+			&entityID,
+		)
+	}
+}
+
+func uniqueUserIDs(values ...*string) []string {
+	seen := make(map[string]struct{}, len(values))
+	out := make([]string, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		id := strings.TrimSpace(*value)
+		if id == "" {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, id)
+	}
+	return out
 }
 
 func (s *Service) UpdateAssignmentStatus(ctx context.Context, id string, req dto.UpdateDispatchStatusRequest, actorUserID *string) (dispatchdomain.DispatchAssignmentResponse, error) {
