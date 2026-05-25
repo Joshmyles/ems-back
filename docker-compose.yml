@@ -90,7 +90,7 @@ services:
     container_name: ems-back
     restart: unless-stopped
     ports:
-      - '3005:8080'
+      - '3009:8080'
     environment:
       APP_ENV: production
       APP_PORT: 8080
