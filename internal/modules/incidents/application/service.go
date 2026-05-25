@@ -50,6 +50,11 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 	if incidentTypeID == "" {
 		incidentTypeID = unclassifiedIncidentTypeID
 	}
+	if incidentTypeID == unclassifiedIncidentTypeID {
+		if err := s.repo.EnsureUnclassifiedIncidentType(ctx, unclassifiedIncidentTypeID); err != nil {
+			return CreateIncidentResponse{}, err
+		}
+	}
 
 	inc := incidentdomain.Incident{
 		ID:                      uuid.NewString(),

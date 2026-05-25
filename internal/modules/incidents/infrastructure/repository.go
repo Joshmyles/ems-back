@@ -26,6 +26,19 @@ func (r *Repository) NextIncidentNumber(ctx context.Context) (string, error) {
 	return fmt.Sprintf("INC-%s-%06d", time.Now().UTC().Format("20060102"), count+1), nil
 }
 
+func (r *Repository) EnsureUnclassifiedIncidentType(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `
+		INSERT INTO ref_incident_types (id, code, name, description, requires_transport)
+		VALUES ($1, 'UNCLASSIFIED', 'Unclassified', 'Default type for public/citizen reports pending dispatch classification', TRUE)
+		ON CONFLICT (code) DO UPDATE
+		SET id = EXCLUDED.id,
+		    name = EXCLUDED.name,
+		    description = EXCLUDED.description,
+		    requires_transport = EXCLUDED.requires_transport
+	`, id)
+	return err
+}
+
 func nilIfBlank(s *string) *string {
 	if s == nil {
 		return nil
