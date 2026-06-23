@@ -20,6 +20,11 @@ type CreateIncidentRequest struct {
 	PatientAgeGroup         string                `json:"patient_age_group"`
 	PatientSex              string                `json:"patient_sex"`
 	PatientDetailsDiagnosis string                `json:"patient_details_diagnosis"`
+	RespiratoryRate         string                `json:"respiratory_rate"`
+	Spo2                    string                `json:"spo2"`
+	Pulse                   string                `json:"pulse"`
+	BP                      string                `json:"bp"`
+	Temperature             string                `json:"temperature"`
 	IncidentTypeID          string                `json:"incident_type_id" binding:"required,uuid"`
 	SeverityLevelID         *string               `json:"severity_level_id"`
 	PriorityLevelID         *string               `json:"priority_level_id"`
@@ -55,6 +60,11 @@ type UpdateIncidentRequest struct {
 	PatientAgeGroup         *string               `json:"patient_age_group,omitempty"`
 	PatientSex              *string               `json:"patient_sex,omitempty" binding:"omitempty,oneof=MALE FEMALE OTHER UNKNOWN"`
 	PatientDetailsDiagnosis *string               `json:"patient_details_diagnosis,omitempty"`
+	RespiratoryRate         *string               `json:"respiratory_rate,omitempty"`
+	Spo2                    *string               `json:"spo2,omitempty"`
+	Pulse                   *string               `json:"pulse,omitempty"`
+	BP                      *string               `json:"bp,omitempty"`
+	Temperature             *string               `json:"temperature,omitempty"`
 	IncidentTypeID          *string               `json:"incident_type_id,omitempty" binding:"omitempty,uuid"`
 	SeverityLevelID         *string               `json:"severity_level_id,omitempty" binding:"omitempty,uuid"`
 	PriorityLevelID         *string               `json:"priority_level_id,omitempty" binding:"omitempty,uuid"`
