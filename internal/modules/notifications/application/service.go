@@ -90,3 +90,7 @@ func (s *Service) Create(ctx context.Context,
 func (s *Service) UpdateStatus(ctx context.Context, id string, status string) error {
 	return s.repo.UpdateStatus(ctx, id, strings.ToUpper(strings.TrimSpace(status)))
 }
+
+func (s *Service) UpdateStatusForUser(ctx context.Context, id string, userID string, status string) error {
+	return s.repo.UpdateStatusForUser(ctx, id, userID, strings.ToUpper(strings.TrimSpace(status)))
+}

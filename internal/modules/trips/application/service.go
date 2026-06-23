@@ -34,6 +34,11 @@ func (s *Service) Get(ctx context.Context, id string) (domain.Trip, error) {
 
 func (s *Service) Create(ctx context.Context, req CreateTripRequest) (domain.Trip, error) {
 	now := time.Now().UTC()
+	startedAt := parseOptionalTime(req.StartedAt)
+	if startedAt == nil {
+		startedAt = &now
+	}
+	endedAt := parseOptionalTime(req.EndedAt)
 	in := domain.Trip{
 		ID:                    uuid.NewString(),
 		DispatchAssignmentID:  req.DispatchAssignmentID,
@@ -48,12 +53,25 @@ func (s *Service) Create(ctx context.Context, req CreateTripRequest) (domain.Tri
 		DestinationLon:        req.DestinationLon,
 		OdometerStart:         req.OdometerStart,
 		OdometerEnd:           req.OdometerEnd,
+		StartedAt:             startedAt,
+		EndedAt:               endedAt,
 		Outcome:               req.Outcome,
 		Notes:                 req.Notes,
 		CreatedAt:             now,
 		UpdatedAt:             now,
 	}
 	return s.repo.CreateTrip(ctx, in)
+}
+
+func parseOptionalTime(raw *string) *time.Time {
+	if raw == nil || *raw == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339, *raw)
+	if err != nil {
+		return nil
+	}
+	return &parsed
 }
 
 func (s *Service) Update(ctx context.Context, id string, req UpdateTripRequest) (domain.Trip, error) {

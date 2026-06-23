@@ -207,6 +207,16 @@ func (r *Repository) UpdateStatus(ctx context.Context, id string, status string)
 	return err
 }
 
+func (r *Repository) UpdateStatusForUser(ctx context.Context, id string, userID string, status string) error {
+	_, err := r.db.Exec(ctx, `
+		UPDATE notifications
+		SET status=$3,
+		    read_at = CASE WHEN $3 = 'READ' THEN now() ELSE read_at END
+		WHERE id=$1 AND recipient_user_id=$2
+	`, id, userID, status)
+	return err
+}
+
 func (r *Repository) MarkSent(ctx context.Context, id string) error {
 	_, err := r.db.Exec(ctx, `
 		UPDATE notifications

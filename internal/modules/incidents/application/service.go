@@ -35,30 +35,51 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 	status := "NEW"
 	verificationStatus := "PENDING"
 	now := time.Now()
+	sourceChannel := strings.ToUpper(strings.TrimSpace(req.SourceChannel))
+	if sourceChannel == "" {
+		sourceChannel = "MOBILE_APP"
+	}
+	patientSex := strings.ToUpper(strings.TrimSpace(req.PatientSex))
+	if patientSex == "" {
+		patientSex = "UNKNOWN"
+	}
+	pickupLocation := strings.ToUpper(strings.TrimSpace(req.PickupLocation))
+	if pickupLocation == "" {
+		pickupLocation = "COMMUNITY"
+	}
+	incidentTypeID := strings.TrimSpace(req.IncidentTypeID)
+	if incidentTypeID == "" {
+		incidentTypeID = unclassifiedIncidentTypeID
+	}
+	if incidentTypeID == unclassifiedIncidentTypeID {
+		if err := s.repo.EnsureUnclassifiedIncidentType(ctx, unclassifiedIncidentTypeID); err != nil {
+			return CreateIncidentResponse{}, err
+		}
+	}
 
 	inc := incidentdomain.Incident{
 		ID:                      uuid.NewString(),
 		IncidentNumber:          incidentNumber,
-		SourceChannel:           strings.ToUpper(strings.TrimSpace(req.SourceChannel)),
+		SourceChannel:           sourceChannel,
 		CallerName:              req.CallerName,
 		CallerPhone:             req.CallerPhone,
 		PatientName:             req.PatientName,
 		PatientPhone:            req.PatientPhone,
 		PatientAgeGroup:         req.PatientAgeGroup,
-		PatientSex:              strings.ToUpper(strings.TrimSpace(req.PatientSex)),
+		PatientSex:              patientSex,
 		PatientDetailsDiagnosis: req.PatientDetailsDiagnosis,
 		RespiratoryRate:         strings.TrimSpace(req.RespiratoryRate),
 		Spo2:                    strings.TrimSpace(req.Spo2),
 		Pulse:                   strings.TrimSpace(req.Pulse),
 		BP:                      strings.TrimSpace(req.BP),
 		Temperature:             strings.TrimSpace(req.Temperature),
-		IncidentTypeID:          req.IncidentTypeID,
+		IncidentTypeID:          IncidentTypeID,
 		SeverityLevelID:         req.SeverityLevelID,
 		PriorityLevelID:         req.PriorityLevelID,
 		Summary:                 req.Summary,
 		Description:             req.Description,
 		DistrictID:              req.DistrictID,
-		PickupLocation:          strings.ToUpper(strings.TrimSpace(req.PickupLocation)),
+		PickupLocation:          pickupLocation,
 		ReceivingFacilityID:     req.ReceivingFacilityID,
 		ReferringFacilityID:     req.ReferringFacilityID,
 		Village:                 req.Village,
@@ -244,6 +265,7 @@ var ErrIncidentNotAssigned = errors.New("incident not assigned to user")
 // ErrIncidentNotFound is returned when an incident does not exist (e.g. on
 // delete of an unknown id).
 var ErrIncidentNotFound = errors.New("incident not found")
+const unclassifiedIncidentTypeID = "00000000-0000-0000-0000-000000000001"
 
 // GetIncidentByIDForAssignee returns the incident only if the user is the
 // driver or lead medic on one of its dispatch assignments.
@@ -305,6 +327,17 @@ func (s *Service) DeleteIncident(ctx context.Context, id string, actorUserID *st
 		},
 	})
 	return nil
+}
+
+func (s *Service) UpdateIncidentStatusForAssignee(ctx context.Context, id, userID string, req UpdateIncidentStatusRequest, actorUserID *string) (incidentdomain.Incident, error) {
+	assigned, err := s.repo.IsUserAssignedToIncident(ctx, id, userID)
+	if err != nil {
+		return incidentdomain.Incident{}, err
+	}
+	if !assigned {
+		return incidentdomain.Incident{}, ErrIncidentNotAssigned
+	}
+	return s.UpdateIncidentStatus(ctx, id, req, actorUserID)
 }
 
 func (s *Service) UpdateIncident(ctx context.Context, id string, req UpdateIncidentRequest, actorUserID *string) (UpdateIncidentResponse, error) {

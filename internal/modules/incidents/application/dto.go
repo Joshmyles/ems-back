@@ -12,7 +12,7 @@ type TriageResponseInput struct {
 }
 
 type CreateIncidentRequest struct {
-	SourceChannel           string                `json:"source_channel" binding:"required"`
+	SourceChannel           string                `json:"source_channel"`
 	CallerName              string                `json:"caller_name"`
 	CallerPhone             string                `json:"caller_phone"`
 	PatientName             string                `json:"patient_name"`
@@ -25,7 +25,7 @@ type CreateIncidentRequest struct {
 	Pulse                   string                `json:"pulse"`
 	BP                      string                `json:"bp"`
 	Temperature             string                `json:"temperature"`
-	IncidentTypeID          string                `json:"incident_type_id" binding:"required,uuid"`
+	IncidentTypeID          string                `json:"incident_type_id" binding:"omitempty,uuid"`
 	SeverityLevelID         *string               `json:"severity_level_id"`
 	PriorityLevelID         *string               `json:"priority_level_id"`
 	Summary                 string                `json:"summary"`
@@ -90,11 +90,13 @@ type UpdateIncidentRequest struct {
 }
 
 type ListIncidentsParams struct {
-	Status              *string `json:"status,omitempty"`
-	DistrictID          *string `json:"district_id,omitempty"`
-	ReceivingFacilityID *string `json:"receiving_facility_id,omitempty"`
-	ReferringFacilityID *string `json:"referring_facility_id,omitempty"`
-	PriorityID          *string `json:"priority_id,omitempty"`
+	Status              *string    `json:"status,omitempty"`
+	DistrictID          *string    `json:"district_id,omitempty"`
+	ReceivingFacilityID *string    `json:"receiving_facility_id,omitempty"`
+	ReferringFacilityID *string    `json:"referring_facility_id,omitempty"`
+	PriorityID          *string    `json:"priority_id,omitempty"`
+	DateFrom            *time.Time `json:"date_from,omitempty"`
+	DateTo              *time.Time `json:"date_to,omitempty"`
 	// AssignedToUserID, when set, restricts results to incidents that have a
 	// dispatch assignment where the user is the driver or lead medic. It is
 	// derived server-side from the caller's roles and is not client-supplied.

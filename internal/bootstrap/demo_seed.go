@@ -285,15 +285,17 @@ func SeedDemoData(ctx context.Context, db *pgxpool.Pool) error {
 		ctx,
 		`INSERT INTO fuel_logs (
 			ambulance_id, fuel_type, liters, cost, odometer_km,
-			station_name, filled_at, filled_by, notes
+			station_name, filled_at, filled_by, notes, public_token
 		) VALUES
-			($1,'Diesel',40.0,220000,10000,'Demo Station',$2,$3,'Initial full tank'),
-			($1,'Diesel',15.0,90000,10025,'Demo Station',$4,$3,'Top up after trip')
+			($1,'Diesel',40.0,220000,10000,'Demo Station',$2,$3,'Initial full tank',$5),
+			($1,'Diesel',15.0,90000,10025,'Demo Station',$4,$3,'Top up after trip',$6)
 		ON CONFLICT DO NOTHING`,
 		ambulanceID,
 		now.Add(-2*time.Hour),
 		adminUserID,
 		now.Add(-45*time.Minute),
+		uuid.NewString(),
+		uuid.NewString(),
 	); err != nil {
 		return fmt.Errorf("failed to seed fuel logs: %w", err)
 	}

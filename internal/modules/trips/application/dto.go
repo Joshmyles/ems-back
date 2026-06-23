@@ -13,6 +13,8 @@ type CreateTripRequest struct {
 	DestinationLon        *float64 `json:"destination_lon,omitempty"`
 	OdometerStart         *float64 `json:"odometer_start,omitempty"`
 	OdometerEnd           *float64 `json:"odometer_end,omitempty"`
+	StartedAt             *string  `json:"started_at,omitempty"`
+	EndedAt               *string  `json:"ended_at,omitempty"`
 	Outcome               *string  `json:"outcome,omitempty"`
 	Notes                 *string  `json:"notes,omitempty"`
 }

@@ -4,6 +4,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -92,6 +93,8 @@ func (h *Handler) Create(c *gin.Context) {
 //	@Param			receiving_facility_id	query		string	false	"Receiving (destination) facility ID"
 //	@Param			referring_facility_id	query		string	false	"Referring (origin) facility ID"
 //	@Param			priority_id				query		string	false	"Priority level ID"
+//	@Param			date_from				query		string	false	"Reported-at start date/time (YYYY-MM-DD or RFC3339)"
+//	@Param			date_to					query		string	false	"Reported-at end date/time, exclusive (YYYY-MM-DD or RFC3339)"
 //	@Param			page					query		int		false	"Page number"	default(1)
 //	@Param			page_size				query		int		false	"Page size"		default(20)
 //	@Param			search					query		string	false	"Search by incident number, summary, or patient name"
@@ -117,8 +120,20 @@ func (h *Handler) List(c *gin.Context) {
 	if v := c.Query("priority_id"); v != "" {
 		priorityID = &v
 	}
+	dateFrom, err := parseIncidentDateQuery(c.Query("date_from"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "invalid date_from")
+		return
+	}
+	dateTo, err := parseIncidentDateQuery(c.Query("date_to"))
+	if err != nil {
+		httpx.Error(c, http.StatusBadRequest, "invalid date_to")
+		return
+	}
 	params := incidentapp.ListIncidentsParams{Status: status, DistrictID: districtID,
 		ReceivingFacilityID: receivingFacilityID, ReferringFacilityID: referringFacilityID, PriorityID: priorityID,
+		DateFrom:         dateFrom,
+		DateTo:           dateTo,
 		AssignedToUserID: assignedScopeUserID(c),
 		Pagination:       platformdb.ParsePagination(c.Request.URL.Query(), map[string]string{"reported_at": "i.reported_at", "created_at": "i.created_at", "status": "i.status"}, map[string]struct{}{}),
 	}
@@ -128,6 +143,21 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, out)
+}
+
+func parseIncidentDateQuery(raw string) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	if t, err := time.Parse(time.RFC3339, raw); err == nil {
+		return &t, nil
+	}
+	t, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
 }
 
 // Update godoc
@@ -185,6 +215,19 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	var actorUserID *string
 	if v := c.GetString("user_id"); v != "" {
 		actorUserID = &v
+	}
+	if scopeUserID := assignedScopeUserID(c); scopeUserID != nil {
+		out, err := h.service.UpdateIncidentStatusForAssignee(c.Request.Context(), c.Param("id"), *scopeUserID, req, actorUserID)
+		if err != nil {
+			if errors.Is(err, incidentapp.ErrIncidentNotAssigned) {
+				httpx.Error(c, http.StatusForbidden, "incident not assigned to you")
+				return
+			}
+			httpx.Error(c, http.StatusInternalServerError, err.Error())
+			return
+		}
+		httpx.OK(c, out)
+		return
 	}
 	out, err := h.service.UpdateIncidentStatus(c.Request.Context(), c.Param("id"), req, actorUserID)
 	if err != nil {

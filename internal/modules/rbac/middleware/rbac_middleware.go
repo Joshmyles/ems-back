@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 
@@ -54,4 +55,36 @@ func RequirePermission(rbacSvc *rbacapp.Service, permission string) gin.HandlerF
 
 		c.Next()
 	}
+}
+
+func RequirePermissionOrRole(rbacSvc *rbacapp.Service, permission string, roleCodes ...string) gin.HandlerFunc {
+	requiredRoles := make(map[string]struct{}, len(roleCodes))
+	for _, roleCode := range roleCodes {
+		roleCode = strings.ToUpper(strings.TrimSpace(roleCode))
+		if roleCode != "" {
+			requiredRoles[roleCode] = struct{}{}
+		}
+	}
+
+	return func(c *gin.Context) {
+		if userHasAnyRole(c, requiredRoles) {
+			c.Next()
+			return
+		}
+		RequirePermission(rbacSvc, permission)(c)
+	}
+}
+
+func userHasAnyRole(c *gin.Context, roleCodes map[string]struct{}) bool {
+	if len(roleCodes) == 0 {
+		return false
+	}
+	rawRoles, _ := c.Get("roles")
+	roles, _ := rawRoles.([]string)
+	for _, role := range roles {
+		if _, ok := roleCodes[strings.ToUpper(strings.TrimSpace(role))]; ok {
+			return true
+		}
+	}
+	return false
 }
