@@ -1,7 +1,6 @@
 package http
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
@@ -37,7 +36,6 @@ func NewHandler(service *notifapp.Service) *Handler {
 //	@Router		/notifications [get]
 func (h *Handler) ListMy(c *gin.Context) {
 	userID := c.GetString("user_id")
-	fmt.Print(userID)
 	p := platformdb.ParsePagination(
 		c.Request.URL.Query(),
 		map[string]string{
@@ -127,7 +125,8 @@ func (h *Handler) Create(c *gin.Context) {
 //	@Router		/notifications/{id}/read [post]
 func (h *Handler) MarkRead(c *gin.Context) {
 	id := c.Param("id")
-	if err := h.service.UpdateStatus(c.Request.Context(), id, "READ"); err != nil {
+	userID := c.GetString("user_id")
+	if err := h.service.UpdateStatusForUser(c.Request.Context(), id, userID, "READ"); err != nil {
 		httpx.Error(c, http.StatusInternalServerError, err.Error())
 		return
 	}

@@ -15,6 +15,7 @@ type QuestionDefinition struct {
 
 type Repository interface {
 	CreateIncident(ctx context.Context, in incidentdomain.Incident) (incidentdomain.Incident, error)
+	EnsureUnclassifiedIncidentType(ctx context.Context, id string) error
 	GetIncidentByID(ctx context.Context, id string) (incidentdomain.Incident, error)
 	IsUserAssignedToIncident(ctx context.Context, incidentID, userID string) (bool, error)
 	ListIncidents(ctx context.Context, params ListIncidentsParams) ([]incidentdomain.Incident, int64, error)

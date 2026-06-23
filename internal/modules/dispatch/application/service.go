@@ -5,6 +5,7 @@ import (
 
 	"dispatch/internal/modules/dispatch/application/dto"
 	dispatchdomain "dispatch/internal/modules/dispatch/domain"
+	notifdomain "dispatch/internal/modules/notifications/domain"
 )
 
 type Repository interface {
@@ -32,4 +33,13 @@ type Repository interface {
 	ListAssignments(ctx context.Context, params dto.ListAssignmentsParams) ([]dispatchdomain.DispatchAssignmentResponse, int64, error)
 	MarkRecommendationSelected(ctx context.Context, incidentID, ambulanceID string) error
 	SetUserAvailabilityBusy(ctx context.Context, incidentID, assignmentID string, ambulanceID, driverUserID, medicUserID *string) error
+}
+
+type NotificationCreator interface {
+	Create(ctx context.Context,
+		typ, channel string,
+		recipientUserID, recipientPhone, recipientEmail, title, linkedEntityType *string,
+		body string,
+		linkedEntityID *string,
+	) (notifdomain.Notification, error)
 }

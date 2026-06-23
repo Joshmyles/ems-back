@@ -35,12 +35,20 @@ func (r *Repository) ListAmbulances(ctx context.Context, p platformdb.Pagination
 	argPos := 1
 
 	if driverUserID != nil && *driverUserID != "" {
-		where = append(where, fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM ambulance_crew_assignments ca2
-			WHERE ca2.ambulance_id = a.id
-			  AND ca2.driver_user_id = $%d
-			  AND ca2.active = TRUE
-		)`, argPos))
+		where = append(where, fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1 FROM ambulance_crew_assignments ca2
+				WHERE ca2.ambulance_id = a.id
+				  AND ca2.driver_user_id = $%d
+				  AND ca2.active = TRUE
+			)
+			OR EXISTS (
+				SELECT 1 FROM dispatch_assignments da
+				WHERE da.ambulance_id = a.id
+				  AND da.driver_user_id = $%d
+				  AND da.status IN ('PROPOSED','ASSIGNED','ACCEPTED','DEPARTED','ARRIVED_SCENE','PATIENT_LOADED','ARRIVED_DESTINATION')
+			)
+		)`, argPos, argPos))
 		args = append(args, *driverUserID)
 		argPos++
 	}
@@ -222,10 +230,20 @@ WHERE a.id = $1`
 	q := baseQuery
 	if driverUserID != nil && *driverUserID != "" {
 		q = baseQuery + ` AND EXISTS (
-			SELECT 1 FROM ambulance_crew_assignments ca2
-			WHERE ca2.ambulance_id = a.id
-			  AND ca2.driver_user_id = $2
-			  AND ca2.active = TRUE
+			SELECT 1
+			FROM (
+				SELECT ca2.ambulance_id
+				FROM ambulance_crew_assignments ca2
+				WHERE ca2.ambulance_id = a.id
+				  AND ca2.driver_user_id = $2
+				  AND ca2.active = TRUE
+				UNION
+				SELECT da.ambulance_id
+				FROM dispatch_assignments da
+				WHERE da.ambulance_id = a.id
+				  AND da.driver_user_id = $2
+				  AND da.status IN ('PROPOSED','ASSIGNED','ACCEPTED','DEPARTED','ARRIVED_SCENE','PATIENT_LOADED','ARRIVED_DESTINATION')
+			) scoped_ambulance
 		)`
 		args = append(args, *driverUserID)
 	}
