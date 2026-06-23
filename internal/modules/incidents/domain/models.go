@@ -13,6 +13,11 @@ type Incident struct {
 	PatientAgeGroup         string     `json:"patient_age_group"`
 	PatientSex              string     `json:"patient_sex"`
 	PatientDetailsDiagnosis string     `json:"patient_details_diagnosis"`
+	RespiratoryRate         string     `json:"respiratory_rate"`
+	Spo2                    string     `json:"spo2"`
+	Pulse                   string     `json:"pulse"`
+	BP                      string     `json:"bp"`
+	Temperature             string     `json:"temperature"`
 	IncidentTypeID          string     `json:"incident_type_id"`
 	SeverityLevelID         *string    `json:"severity_level_id,omitempty"`
 	PriorityLevelID         *string    `json:"priority_level_id,omitempty"`

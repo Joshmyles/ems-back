@@ -194,6 +194,34 @@ func (h *Handler) UpdateStatus(c *gin.Context) {
 	httpx.OK(c, out)
 }
 
+// Delete godoc
+//
+//	@Summary		Delete incident
+//	@Description	Hard-deletes an incident. Restricted to administrators (incidents.delete permission).
+//	@Tags			Incidents
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Incident ID"
+//	@Success		204	"No Content"
+//	@Failure		404	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/incidents/{id} [delete]
+func (h *Handler) Delete(c *gin.Context) {
+	var actorUserID *string
+	if v := c.GetString("user_id"); v != "" {
+		actorUserID = &v
+	}
+	if err := h.service.DeleteIncident(c.Request.Context(), c.Param("id"), actorUserID); err != nil {
+		if errors.Is(err, incidentapp.ErrIncidentNotFound) {
+			httpx.Error(c, http.StatusNotFound, "incident not found")
+			return
+		}
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // GetByID godoc
 //
 //	@Summary		Get incident by ID

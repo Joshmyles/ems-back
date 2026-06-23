@@ -20,6 +20,7 @@ type Repository interface {
 	ListIncidents(ctx context.Context, params ListIncidentsParams) ([]incidentdomain.Incident, int64, error)
 	UpdateIncident(ctx context.Context, id string, req UpdateIncidentRequest) (incidentdomain.Incident, error)
 	UpdateIncidentStatus(ctx context.Context, id, status string) (incidentdomain.Incident, error)
+	DeleteIncident(ctx context.Context, id string) error
 	CreateIncidentUpdate(ctx context.Context, incidentID, updateType, oldValue, newValue, notes string, actorUserID *string) error
 	NextIncidentNumber(ctx context.Context) (string, error)
 	ResolvePriorityLevelIDByCode(ctx context.Context, code string) (*string, error)
