@@ -7,6 +7,7 @@ type FuelLog struct {
 	AmbulanceID string    `json:"ambulance_id"`
 	FuelType    *string   `json:"fuel_type,omitempty"`
 	Liters      float64   `json:"liters"`
+	UnitCost    *float64  `json:"unit_cost,omitempty"`
 	Cost        *float64  `json:"cost,omitempty"`
 	OdometerKM  *int      `json:"odometer_km,omitempty"`
 	StationName *string   `json:"station_name,omitempty"`

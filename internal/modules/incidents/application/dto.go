@@ -89,6 +89,15 @@ type UpdateIncidentRequest struct {
 	Notes                   string                `json:"notes,omitempty"`
 }
 
+// CreateIncidentFeedbackRequest is the receiving facility's outcome report for a
+// transferred/received patient.
+type CreateIncidentFeedbackRequest struct {
+	OutcomeStatus string `json:"outcome_status" binding:"required,oneof=ADMITTED DISCHARGED STABILIZED REFERRED DECEASED OTHER"`
+	Summary       string `json:"summary" binding:"required"`
+	ReportedBy    string `json:"reported_by"`
+	OtherDetails  string `json:"other_details"`
+}
+
 type ListIncidentsParams struct {
 	Status              *string    `json:"status,omitempty"`
 	DistrictID          *string    `json:"district_id,omitempty"`
