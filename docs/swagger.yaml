@@ -434,6 +434,13 @@ definitions:
     - facility_uid
     - subcounty_uid
     type: object
+  dispatch_internal_modules_facilities_application.SetFocalPersonRequest:
+    properties:
+      user_id:
+        type: string
+    required:
+    - user_id
+    type: object
   dispatch_internal_modules_facilities_application.UpdateFacilityRequest:
     properties:
       facility:
@@ -444,6 +451,13 @@ definitions:
         type: string
       subcounty_uid:
         type: string
+    type: object
+  dispatch_internal_modules_fleet_application.AssignDriverRequest:
+    properties:
+      driver_user_id:
+        type: string
+    required:
+    - driver_user_id
     type: object
   dispatch_internal_modules_fleet_application.CreateAmbulanceRequest:
     properties:
@@ -532,6 +546,21 @@ definitions:
       year_of_manufacture:
         type: integer
     type: object
+  dispatch_internal_modules_fuel_application.ConfirmFuelDispenseRequest:
+    properties:
+      approved:
+        type: boolean
+      attendant_name:
+        type: string
+      attendant_phone:
+        type: string
+      dispensed_at:
+        type: string
+      notes:
+        type: string
+    required:
+    - attendant_name
+    type: object
   dispatch_internal_modules_fuel_application.CreateFuelLogRequest:
     properties:
       ambulance_id:
@@ -571,13 +600,34 @@ definitions:
       station_name:
         type: string
     type: object
+  dispatch_internal_modules_fuel_domain.CrewMember:
+    properties:
+      name:
+        type: string
+      phone:
+        type: string
+      role:
+        type: string
+    type: object
   dispatch_internal_modules_fuel_domain.FuelLog:
     properties:
       ambulance_id:
         type: string
+      attendant_name:
+        type: string
+      attendant_notes:
+        type: string
+      attendant_phone:
+        type: string
+      confirmed_at:
+        type: string
       cost:
         type: number
       created_at:
+        type: string
+      dispense_confirmed:
+        type: boolean
+      dispensed_at:
         type: string
       filled_at:
         type: string
@@ -593,13 +643,37 @@ definitions:
         type: string
       odometer_km:
         type: integer
+      public_token:
+        description: QR-based public verification.
+        type: string
       station_name:
         type: string
       updated_at:
         type: string
     type: object
+  dispatch_internal_modules_fuel_domain.FuelLogPublicView:
+    properties:
+      ambulance_code:
+        type: string
+      ambulance_make:
+        type: string
+      ambulance_model:
+        type: string
+      ambulance_plate:
+        type: string
+      crew:
+        items:
+          $ref: '#/definitions/dispatch_internal_modules_fuel_domain.CrewMember'
+        type: array
+      fuel_log:
+        $ref: '#/definitions/dispatch_internal_modules_fuel_domain.FuelLog'
+      logged_by_name:
+        type: string
+    type: object
   dispatch_internal_modules_incidents_application.CreateIncidentRequest:
     properties:
+      bp:
+        type: string
       caller_name:
         type: string
       caller_phone:
@@ -609,8 +683,6 @@ definitions:
       description:
         type: string
       district_id:
-        type: string
-      facility_id:
         type: string
       incident_type_id:
         type: string
@@ -624,23 +696,42 @@ definitions:
         type: string
       patient_age_group:
         type: string
+      patient_details_diagnosis:
+        type: string
       patient_name:
         type: string
       patient_phone:
         type: string
       patient_sex:
         type: string
+      pickup_location:
+        enum:
+        - COMMUNITY
+        - FACILITY
+        type: string
       priority_level_id:
         type: string
+      pulse:
+        type: string
       questionnaire_code:
+        type: string
+      receiving_facility_id:
+        type: string
+      referring_facility_id:
+        type: string
+      respiratory_rate:
         type: string
       severity_level_id:
         type: string
       source_channel:
         type: string
+      spo2:
+        type: string
       subcounty:
         type: string
       summary:
+        type: string
+      temperature:
         type: string
       triage_notes:
         type: string
@@ -650,10 +741,6 @@ definitions:
         type: array
       village:
         type: string
-    required:
-    - incident_type_id
-    - source_channel
-    - summary
     type: object
   dispatch_internal_modules_incidents_application.TriageResponseInput:
     properties:
@@ -667,6 +754,8 @@ definitions:
     type: object
   dispatch_internal_modules_incidents_application.UpdateIncidentRequest:
     properties:
+      bp:
+        type: string
       caller_name:
         type: string
       caller_phone:
@@ -674,8 +763,6 @@ definitions:
       description:
         type: string
       district_id:
-        type: string
-      facility_id:
         type: string
       incident_type_id:
         type: string
@@ -691,6 +778,8 @@ definitions:
         type: string
       patient_age_group:
         type: string
+      patient_details_diagnosis:
+        type: string
       patient_name:
         type: string
       patient_phone:
@@ -702,11 +791,24 @@ definitions:
         - OTHER
         - UNKNOWN
         type: string
+      pickup_location:
+        enum:
+        - COMMUNITY
+        - FACILITY
+        type: string
       priority_level_id:
+        type: string
+      pulse:
         type: string
       questionnaire_code:
         type: string
+      receiving_facility_id:
+        type: string
+      referring_facility_id:
+        type: string
       reported_at:
+        type: string
+      respiratory_rate:
         type: string
       severity_level_id:
         type: string
@@ -718,6 +820,8 @@ definitions:
         - MOBILE_APP
         - WEB_PORTAL
         - FACILITY_REFERRAL
+        type: string
+      spo2:
         type: string
       status:
         enum:
@@ -737,6 +841,8 @@ definitions:
       subcounty:
         type: string
       summary:
+        type: string
+      temperature:
         type: string
       triage_notes:
         type: string
@@ -758,6 +864,19 @@ definitions:
       notes:
         type: string
       status:
+        enum:
+        - NEW
+        - PENDING_VERIFICATION
+        - VERIFIED
+        - AWAITING_ASSIGNMENT
+        - ASSIGNED
+        - ENROUTE
+        - AT_SCENE
+        - TRANSPORTING
+        - COMPLETED
+        - CANCELLED
+        - ESCALATED
+        - REJECTED
         type: string
     required:
     - status
@@ -832,6 +951,8 @@ definitions:
         type: number
       dispatch_assignment_id:
         type: string
+      ended_at:
+        type: string
       incident_id:
         type: string
       notes:
@@ -850,6 +971,8 @@ definitions:
         type: number
       scene_lon:
         type: number
+      started_at:
+        type: string
     required:
     - dispatch_assignment_id
     - incident_id
@@ -1298,6 +1421,82 @@ paths:
       security:
       - BearerAuth: []
       summary: Update ambulance
+      tags:
+      - Fleet
+  /ambulances/{id}/driver:
+    delete:
+      description: Clears the driver from the ambulance's active crew assignment
+      parameters:
+      - description: Ambulance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Unassign driver from ambulance
+      tags:
+      - Fleet
+    post:
+      consumes:
+      - application/json
+      description: Sets the active driver on an ambulance's crew assignment
+      parameters:
+      - description: Ambulance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Driver assignment payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dispatch_internal_modules_fleet_application.AssignDriverRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Assign driver to ambulance
       tags:
       - Fleet
   /auth/login:
@@ -2767,6 +2966,82 @@ paths:
       summary: Update facility
       tags:
       - Facilities
+  /facilities/{uid}/focal-person:
+    delete:
+      description: Remove the focal person from a facility
+      parameters:
+      - description: Facility UID
+        in: path
+        name: uid
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Clear facility focal person
+      tags:
+      - Facilities
+    put:
+      consumes:
+      - application/json
+      description: Assign or replace the focal person for a facility (one per facility)
+      parameters:
+      - description: Facility UID
+        in: path
+        name: uid
+        required: true
+        type: string
+      - description: Focal person payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dispatch_internal_modules_facilities_application.SetFocalPersonRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Set facility focal person
+      tags:
+      - Facilities
   /fuel/logs:
     get:
       description: List fuel logs with pagination
@@ -2798,6 +3073,11 @@ paths:
       - description: Filter by ambulance_id (UUID)
         in: query
         name: filter[ambulance_id]
+        type: string
+      - description: Filter by user (UUID). Returns fuel logs for ambulances where
+          this user is the active driver, plus logs they personally filled.
+        in: query
+        name: filter[user_id]
         type: string
       - description: Filter by filled_at from (ISO 8601)
         in: query
@@ -3014,13 +3294,25 @@ paths:
         in: query
         name: district_id
         type: string
-      - description: Facility ID
+      - description: Receiving (destination) facility ID
         in: query
-        name: facility_id
+        name: receiving_facility_id
+        type: string
+      - description: Referring (origin) facility ID
+        in: query
+        name: referring_facility_id
         type: string
       - description: Priority level ID
         in: query
         name: priority_id
+        type: string
+      - description: Reported-at start date/time (YYYY-MM-DD or RFC3339)
+        in: query
+        name: date_from
+        type: string
+      - description: Reported-at end date/time, exclusive (YYYY-MM-DD or RFC3339)
+        in: query
+        name: date_to
         type: string
       - default: 1
         description: Page number
@@ -3103,6 +3395,35 @@ paths:
       tags:
       - Incidents
   /incidents/{id}:
+    delete:
+      description: Hard-deletes an incident. Restricted to administrators (incidents.delete
+        permission).
+      parameters:
+      - description: Incident ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Delete incident
+      tags:
+      - Incidents
     get:
       description: Returns an incident by ID
       parameters:
@@ -3468,6 +3789,72 @@ paths:
       summary: Mark blood as delivered
       tags:
       - Blood
+  /public/fuel-logs/{token}:
+    get:
+      description: Public, unauthenticated view returned when a fuel log QR code is
+        scanned
+      parameters:
+      - description: Fuel log public token
+        in: path
+        name: token
+        required: true
+        type: string
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dispatch_internal_modules_fuel_domain.FuelLogPublicView'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get public fuel log by QR token
+      tags:
+      - Fuel
+  /public/fuel-logs/{token}/confirm:
+    post:
+      consumes:
+      - application/json
+      description: Public endpoint used by the fuel station attendant to confirm fuel
+        was dispensed
+      parameters:
+      - description: Fuel log public token
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: Confirmation payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/dispatch_internal_modules_fuel_application.ConfirmFuelDispenseRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dispatch_internal_modules_fuel_domain.FuelLogPublicView'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Confirm fuel dispense from the QR page
+      tags:
+      - Fuel
   /rbac/me/permissions:
     get:
       description: Returns the list of permissions granted to the authenticated user
@@ -3909,6 +4296,97 @@ paths:
       summary: List triage questions
       tags:
       - Reference
+  /responders:
+    get:
+      description: Returns paginated responders aggregated from ambulances, their
+        active crew/driver, station and current dispatch load
+      parameters:
+      - default: 1
+        description: Page number
+        in: query
+        name: page
+        type: integer
+      - default: 20
+        description: Page size
+        in: query
+        name: page_size
+        type: integer
+      - description: Search term (code, plate, driver name, district)
+        in: query
+        name: search
+        type: string
+      - description: Sort field
+        enum:
+        - created_at
+        - plate_number
+        - status
+        in: query
+        name: sort_by
+        type: string
+      - description: Sort order
+        enum:
+        - ASC
+        - DESC
+        in: query
+        name: sort_order
+        type: string
+      - description: Filter by ambulance status
+        in: query
+        name: filter[status]
+        type: string
+      - description: Filter by district id
+        in: query
+        name: filter[district_id]
+        type: string
+      - description: Filter by ambulance category id
+        in: query
+        name: filter[category_id]
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List responders
+      tags:
+      - Responders
+  /responders/{id}:
+    get:
+      description: Get a single responder by ambulance ID
+      parameters:
+      - description: Ambulance ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get responder
+      tags:
+      - Responders
   /trips:
     get:
       parameters:

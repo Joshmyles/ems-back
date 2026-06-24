@@ -73,7 +73,7 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 		Pulse:                   strings.TrimSpace(req.Pulse),
 		BP:                      strings.TrimSpace(req.BP),
 		Temperature:             strings.TrimSpace(req.Temperature),
-		IncidentTypeID:          IncidentTypeID,
+		IncidentTypeID:          incidentTypeID,
 		SeverityLevelID:         req.SeverityLevelID,
 		PriorityLevelID:         req.PriorityLevelID,
 		Summary:                 req.Summary,

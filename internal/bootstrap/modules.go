@@ -14,6 +14,7 @@ import (
 	notifmod "dispatch/internal/modules/notifications"
 	rbacmod "dispatch/internal/modules/rbac"
 	refmod "dispatch/internal/modules/reference"
+	respmod "dispatch/internal/modules/responders"
 	tripsmod "dispatch/internal/modules/trips"
 	usermod "dispatch/internal/modules/users"
 	"dispatch/internal/shared/types"
@@ -44,6 +45,7 @@ func RegisterModules(deps types.ModuleDeps) {
 	usermod.Register(securedDeps, rbacSvc)
 	facilitiesmod.Register(securedDeps, rbacSvc)
 	fleetmod.Register(securedDeps, rbacSvc)
+	respmod.Register(securedDeps, rbacSvc)
 	// incidents is registered on the unsecured router so the public can report
 	// incidents (POST /incidents). Read/update routes re-apply AuthMiddleware
 	// inside the module's RegisterRoutes.
