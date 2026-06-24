@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"math"
 	"time"
 
 	"dispatch/internal/modules/fuel/domain"
@@ -12,6 +13,11 @@ import (
 
 	"go.uber.org/zap"
 )
+
+// roundMoney rounds a monetary amount to 2 decimal places.
+func roundMoney(v float64) float64 {
+	return math.Round(v*100) / 100
+}
 
 // Sentinel errors surfaced to the public QR endpoints.
 var (
@@ -65,6 +71,7 @@ func (s *Service) Create(ctx context.Context, req CreateFuelLogRequest, filledBy
 		AmbulanceID: req.AmbulanceID,
 		FuelType:    req.FuelType,
 		Liters:      req.Liters,
+		UnitCost:    req.UnitCost,
 		Cost:        req.Cost,
 		OdometerKM:  req.OdometerKM,
 		StationName: req.StationName,
@@ -75,10 +82,31 @@ func (s *Service) Create(ctx context.Context, req CreateFuelLogRequest, filledBy
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
+	// Total cost is derived from the user-entered unit cost: cost = liters * unit_cost.
+	if req.UnitCost != nil {
+		total := roundMoney(req.Liters * *req.UnitCost)
+		in.Cost = &total
+	}
 	return s.repo.Create(ctx, in)
 }
 
 func (s *Service) Update(ctx context.Context, id string, req UpdateFuelLogRequest) (domain.FuelLog, error) {
+	// When the unit cost is provided, re-derive the total cost from the
+	// effective liters (the new value when supplied, otherwise the stored one).
+	if req.UnitCost != nil {
+		liters := 0.0
+		if req.Liters != nil {
+			liters = *req.Liters
+		} else {
+			existing, err := s.repo.GetByID(ctx, id, nil)
+			if err != nil {
+				return domain.FuelLog{}, err
+			}
+			liters = existing.Liters
+		}
+		total := roundMoney(liters * *req.UnitCost)
+		req.Cost = &total
+	}
 	return s.repo.Update(ctx, id, req)
 }
 
