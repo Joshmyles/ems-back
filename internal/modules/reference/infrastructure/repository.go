@@ -457,7 +457,11 @@ func (r *Repository) ListTriageQuestions(ctx context.Context, params dto.ListTri
 		return nil, 0, err
 	}
 
-	orderBy := platformdb.BuildOrderBy(p, allowedSorts)
+	// Append a unique tiebreaker (display_order, then the UNIQUE code) so OFFSET
+	// pagination is deterministic. The default sort column (created_at) ties
+	// across rows inserted in the same statement, which made pages overlap and
+	// silently drop questions.
+	orderBy := platformdb.BuildOrderBy(p, allowedSorts) + ", tq.display_order ASC, tq.code ASC"
 	query := fmt.Sprintf(`
 		SELECT
 			tq.id,
