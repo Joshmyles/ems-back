@@ -40,10 +40,6 @@ func main() {
 		log.Fatal(err)
 	}
 
-	if err := bootstrap.SeedDemoData(ctx, pool); err != nil {
-		log.Fatal(err)
-	}
-
 	fmt.Println("seeding finished")
 }
 
