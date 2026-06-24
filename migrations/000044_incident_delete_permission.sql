@@ -1,5 +1,5 @@
 -- ============================================
--- File: 000040_incident_delete_permission.sql
+-- File: 000044_incident_delete_permission.sql (renumbered from 000040)
 -- ============================================
 -- Adds the incidents.delete permission used to guard hard-deletion of an
 -- incident. Deletion is destructive (it cascades to dispatch, triage, trips and
