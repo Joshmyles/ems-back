@@ -82,8 +82,15 @@ SELECT
 	t.outcome,
 	t.notes,
 	t.created_at,
-	t.updated_at
+	t.updated_at,
+	COALESCE(i.incident_number,''),
+	COALESCE(a.code,''),
+	COALESCE(a.plate_number,''),
+	COALESCE(df.name,'')
 FROM trips t
+LEFT JOIN incidents i ON i.id = t.incident_id
+LEFT JOIN ambulances a ON a.id = t.ambulance_id
+LEFT JOIN ref_facilities df ON df.id = t.destination_facility_id
 %s
 %s
 LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argPos, argPos+1)
@@ -117,6 +124,10 @@ LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argPos, argPos+1)
 			&t.Notes,
 			&t.CreatedAt,
 			&t.UpdatedAt,
+			&t.IncidentNumber,
+			&t.AmbulanceCode,
+			&t.AmbulancePlate,
+			&t.DestinationFacilityName,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -146,8 +157,15 @@ SELECT
 	t.outcome,
 	t.notes,
 	t.created_at,
-	t.updated_at
+	t.updated_at,
+	COALESCE(i.incident_number,''),
+	COALESCE(a.code,''),
+	COALESCE(a.plate_number,''),
+	COALESCE(df.name,'')
 FROM trips t
+LEFT JOIN incidents i ON i.id = t.incident_id
+LEFT JOIN ambulances a ON a.id = t.ambulance_id
+LEFT JOIN ref_facilities df ON df.id = t.destination_facility_id
 WHERE t.id = $1`
 	var t domain.Trip
 	if err := r.db.QueryRow(ctx, q, id).Scan(
@@ -170,6 +188,10 @@ WHERE t.id = $1`
 		&t.Notes,
 		&t.CreatedAt,
 		&t.UpdatedAt,
+		&t.IncidentNumber,
+		&t.AmbulanceCode,
+		&t.AmbulancePlate,
+		&t.DestinationFacilityName,
 	); err != nil {
 		return domain.Trip{}, err
 	}
@@ -330,8 +352,10 @@ SELECT
 	te.latitude,
 	te.longitude,
 	te.actor_user_id,
-	te.notes
+	te.notes,
+	COALESCE(TRIM(CONCAT_WS(' ', au.first_name, au.last_name, au.other_name)),'')
 FROM trip_events te
+LEFT JOIN users au ON au.id = te.actor_user_id
 WHERE te.trip_id = $1
 ORDER BY te.event_time DESC
 LIMIT $2 OFFSET $3`
@@ -354,6 +378,7 @@ LIMIT $2 OFFSET $3`
 			&e.Longitude,
 			&e.ActorUserID,
 			&e.Notes,
+			&e.ActorUserName,
 		); err != nil {
 			return nil, 0, err
 		}

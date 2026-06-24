@@ -25,6 +25,12 @@ type BloodRequisition struct {
 	CreatedAt             time.Time  `json:"created_at"`
 	UpdatedAt             time.Time  `json:"updated_at"`
 	ExpiresAt             *time.Time `json:"expires_at,omitempty"`
+
+	// Derived display names resolved via joins (omitted when blank).
+	RequestingFacilityName  string `json:"requesting_facility_name,omitempty"`
+	DestinationFacilityName string `json:"destination_facility_name,omitempty"`
+	RequestedByUserName     string `json:"requested_by_user_name,omitempty"`
+	IncidentNumber          string `json:"incident_number,omitempty"`
 }
 
 type BloodRequisitionOffer struct {
@@ -42,6 +48,7 @@ type BloodRequisitionOffer struct {
 	ContactPersonName  string     `json:"contact_person_name"`
 	ContactPhone       string     `json:"contact_phone"`
 	OfferedByUserID    *string    `json:"offered_by_user_id,omitempty"`
+	OfferedByUserName  string     `json:"offered_by_user_name,omitempty"`
 	Status             string     `json:"status"`
 	CreatedAt          time.Time  `json:"created_at"`
 	UpdatedAt          time.Time  `json:"updated_at"`

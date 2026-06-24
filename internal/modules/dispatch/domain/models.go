@@ -73,6 +73,11 @@ type DispatchRecommendation struct {
 	RuleSummary  string    `json:"rule_summary"`
 	GeneratedAt  time.Time `json:"generated_at"`
 	Selected     bool      `json:"selected"`
+
+	// Derived display names resolved via joins (omitted when blank).
+	AmbulanceCode  string `json:"ambulance_code,omitempty"`
+	AmbulancePlate string `json:"plate_number,omitempty"`
+	DriverName     string `json:"driver_name,omitempty"`
 }
 
 type TriageEvaluation struct {

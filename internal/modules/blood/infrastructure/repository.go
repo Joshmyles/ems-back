@@ -66,10 +66,15 @@ func (r *Repository) GetRequisitionByID(ctx context.Context, id string) (blooddo
 	SELECT br.id, br.incident_id, br.requesting_facility_id, COALESCE(br.patient_name,''), COALESCE(br.patient_identifier,''),
 	       br.clinical_summary, COALESCE(br.diagnosis,''), COALESCE(br.indication,''), COALESCE(br.parity_summary,''),
 	       br.blood_group_id, bg.code, br.blood_product_id, bp.code, br.units_requested, br.urgency_level, br.status,
-	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at
+	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at,
+	       COALESCE(rf.name,''), COALESCE(df.name,''), COALESCE(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name, ru.other_name)),''), COALESCE(inc.incident_number,'')
 	FROM blood_requisitions br
 	JOIN blood_groups bg ON bg.id = br.blood_group_id
 	JOIN blood_products bp ON bp.id = br.blood_product_id
+	LEFT JOIN ref_facilities rf ON rf.id = br.requesting_facility_id
+	LEFT JOIN ref_facilities df ON df.id = br.destination_facility_id
+	LEFT JOIN users ru ON ru.id = br.requested_by_user_id
+	LEFT JOIN incidents inc ON inc.id = br.incident_id
 	WHERE br.id = $1`
 	var out blooddomain.BloodRequisition
 	err := r.db.QueryRow(ctx, q, id).Scan(
@@ -79,6 +84,7 @@ func (r *Repository) GetRequisitionByID(ctx context.Context, id string) (blooddo
 		&out.UnitsRequested, &out.UrgencyLevel, &out.Status,
 		&out.ReporterPhone, &out.DestinationFacilityID, &out.RequestedByUserID,
 		&out.CreatedAt, &out.UpdatedAt, &out.ExpiresAt,
+		&out.RequestingFacilityName, &out.DestinationFacilityName, &out.RequestedByUserName, &out.IncidentNumber,
 	)
 	return out, err
 }
@@ -133,10 +139,15 @@ func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Paginati
 	SELECT br.id, br.incident_id, br.requesting_facility_id, COALESCE(br.patient_name,''), COALESCE(br.patient_identifier,''),
 	       br.clinical_summary, COALESCE(br.diagnosis,''), COALESCE(br.indication,''), COALESCE(br.parity_summary,''),
 	       br.blood_group_id, bg.code, br.blood_product_id, bp.code, br.units_requested, br.urgency_level, br.status,
-	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at
+	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at,
+	       COALESCE(rf.name,''), COALESCE(df.name,''), COALESCE(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name, ru.other_name)),''), COALESCE(inc.incident_number,'')
 	FROM blood_requisitions br
 	JOIN blood_groups bg ON bg.id = br.blood_group_id
 	JOIN blood_products bp ON bp.id = br.blood_product_id
+	LEFT JOIN ref_facilities rf ON rf.id = br.requesting_facility_id
+	LEFT JOIN ref_facilities df ON df.id = br.destination_facility_id
+	LEFT JOIN users ru ON ru.id = br.requested_by_user_id
+	LEFT JOIN incidents inc ON inc.id = br.incident_id
 	%s
 	%s
 	LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argPos, argPos+1)
@@ -155,6 +166,7 @@ func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Paginati
 			&out.UnitsRequested, &out.UrgencyLevel, &out.Status,
 			&out.ReporterPhone, &out.DestinationFacilityID, &out.RequestedByUserID,
 			&out.CreatedAt, &out.UpdatedAt, &out.ExpiresAt,
+			&out.RequestingFacilityName, &out.DestinationFacilityName, &out.RequestedByUserName, &out.IncidentNumber,
 		); err != nil {
 			return nil, 0, err
 		}
@@ -257,11 +269,13 @@ func (r *Repository) getOfferByID(ctx context.Context, id string) (blooddomain.B
 	SELECT bro.id, bro.blood_requisition_id, bro.inventory_site_id, COALESCE(bis.name,''),
 	       bro.blood_product_id, bp.code, bro.blood_group_id, bg.code,
 	       bro.units_offered, bro.reserved_until, COALESCE(bro.notes,''), COALESCE(bro.contact_person_name,''), COALESCE(bro.contact_phone,''),
-	       bro.offered_by_user_id, bro.status, bro.created_at, bro.updated_at
+	       bro.offered_by_user_id, bro.status, bro.created_at, bro.updated_at,
+	       COALESCE(TRIM(CONCAT_WS(' ', ou.first_name, ou.last_name, ou.other_name)),'')
 	FROM blood_requisition_offers bro
 	JOIN blood_inventory_sites bis ON bis.id = bro.inventory_site_id
 	JOIN blood_products bp ON bp.id = bro.blood_product_id
 	JOIN blood_groups bg ON bg.id = bro.blood_group_id
+	LEFT JOIN users ou ON ou.id = bro.offered_by_user_id
 	WHERE bro.id = $1`
 	var out blooddomain.BloodRequisitionOffer
 	err := r.db.QueryRow(ctx, q, id).Scan(
@@ -269,6 +283,7 @@ func (r *Repository) getOfferByID(ctx context.Context, id string) (blooddomain.B
 		&out.BloodProductID, &out.BloodProductCode, &out.BloodGroupID, &out.BloodGroupCode,
 		&out.UnitsOffered, &out.ReservedUntil, &out.Notes, &out.ContactPersonName, &out.ContactPhone,
 		&out.OfferedByUserID, &out.Status, &out.CreatedAt, &out.UpdatedAt,
+		&out.OfferedByUserName,
 	)
 	return out, err
 }
@@ -302,11 +317,13 @@ func (r *Repository) ListOffers(ctx context.Context, requisitionID string, p pla
 	SELECT bro.id, bro.blood_requisition_id, bro.inventory_site_id, COALESCE(bis.name,''),
 	       bro.blood_product_id, bp.code, bro.blood_group_id, bg.code,
 	       bro.units_offered, bro.reserved_until, COALESCE(bro.notes,''), COALESCE(bro.contact_person_name,''), COALESCE(bro.contact_phone,''),
-	       bro.offered_by_user_id, bro.status, bro.created_at, bro.updated_at
+	       bro.offered_by_user_id, bro.status, bro.created_at, bro.updated_at,
+	       COALESCE(TRIM(CONCAT_WS(' ', ou.first_name, ou.last_name, ou.other_name)),'')
 	FROM blood_requisition_offers bro
 	JOIN blood_inventory_sites bis ON bis.id = bro.inventory_site_id
 	JOIN blood_products bp ON bp.id = bro.blood_product_id
 	JOIN blood_groups bg ON bg.id = bro.blood_group_id
+	LEFT JOIN users ou ON ou.id = bro.offered_by_user_id
 	%s
 	%s
 	LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argPos, argPos+1)
@@ -323,6 +340,7 @@ func (r *Repository) ListOffers(ctx context.Context, requisitionID string, p pla
 			&out.BloodProductID, &out.BloodProductCode, &out.BloodGroupID, &out.BloodGroupCode,
 			&out.UnitsOffered, &out.ReservedUntil, &out.Notes, &out.ContactPersonName, &out.ContactPhone,
 			&out.OfferedByUserID, &out.Status, &out.CreatedAt, &out.UpdatedAt,
+			&out.OfferedByUserName,
 		); err != nil {
 			return nil, 0, err
 		}
