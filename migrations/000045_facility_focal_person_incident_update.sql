@@ -1,5 +1,5 @@
 -- ============================================
--- File: 000039_facility_focal_person_incident_update.sql
+-- File: 000045_facility_focal_person_incident_update.sql (renumbered from 000039)
 -- ============================================
 -- Allows facility focal persons to update incident details, status, and triage
 -- fields through endpoints guarded by incidents.triage.
