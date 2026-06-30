@@ -35,7 +35,9 @@ func (r *Repository) Create(ctx context.Context, u domain.User, passwordHash str
 				timezone, created_at, updated_at
 			)
 			VALUES (
-				$1,$2,$3,$4,$5,$6,$7,
+				$1,
+				COALESCE(NULLIF($2, ''), 'EMS-' || lpad(nextval('users_staff_no_seq')::text, 6, '0')),
+				$3,$4,$5,$6,$7,
 				$8,$9,$10,'ACTIVE',true,$11,
 				$12,$13,$13
 			)

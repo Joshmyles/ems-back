@@ -19,11 +19,11 @@ type Repository struct{ db *pgxpool.Pool }
 func NewRepository(db *pgxpool.Pool) *Repository { return &Repository{db: db} }
 
 func (r *Repository) NextIncidentNumber(ctx context.Context) (string, error) {
-	var count int64
-	if err := r.db.QueryRow(ctx, `SELECT COUNT(1) FROM incidents`).Scan(&count); err != nil {
+	var seq int64
+	if err := r.db.QueryRow(ctx, `SELECT nextval('incidents_incident_number_seq')`).Scan(&seq); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("INC-%s-%06d", time.Now().UTC().Format("20060102"), count+1), nil
+	return fmt.Sprintf("INC-%s-%06d", time.Now().UTC().Format("20060102"), seq), nil
 }
 
 func (r *Repository) EnsureUnclassifiedIncidentType(ctx context.Context, id string) error {
