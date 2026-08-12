@@ -34,6 +34,9 @@ COPY --from=builder /app/migrate .
 COPY --from=builder /app/seed .
 COPY --from=builder /app/worker .
 COPY --from=builder /app/migrations ./migrations
+# Firebase Admin key baked in (default FIREBASE_CREDENTIALS_FILE path).
+# NOTE: the registry repo MUST be private — this file grants FCM send access.
+COPY --from=builder /app/secrets ./secrets
 
 # Ensure binaries are executable
 RUN chmod +x server migrate seed worker

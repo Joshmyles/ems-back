@@ -21,6 +21,9 @@ coverage.html
 .idea/
 .vscode/
 secrets/*
+# Committed deliberately per project decision: baked into the Docker image
+# so CI builds work without extra setup.
+!secrets/firebase-service-account.json
 *.swp
 *.swo
 *~

@@ -106,9 +106,8 @@ services:
       # Kafka. The kafka/worker services below stay defined but unused.
       KAFKA_BROKERS: disabled
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
-      FIREBASE_CREDENTIALS_FILE: /app/secrets/firebase-service-account.json
-    volumes:
-      - ./secrets:/app/secrets:ro
+      # Firebase key is baked into the image at the config default path
+      # (./secrets/firebase-service-account.json); no host mount needed.
     depends_on:
       postgres:
         condition: service_healthy
