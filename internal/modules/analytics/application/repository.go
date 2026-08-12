@@ -8,5 +8,5 @@ import (
 
 type Repository interface {
 	GetSummary(ctx context.Context, filters analyticsdomain.Filters) (analyticsdomain.Summary, error)
-	GetFuelAnalytics(ctx context.Context) (analyticsdomain.FuelAnalytics, error)
+	GetFuelAnalytics(ctx context.Context, filters analyticsdomain.FuelFilters) (analyticsdomain.FuelAnalytics, error)
 }

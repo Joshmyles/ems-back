@@ -340,8 +340,9 @@ func humanizeCode(code string) string {
 }
 
 // GetFuelAnalytics aggregates fuel consumption fleet-wide and per funding
-// source so funders can see how their allocation was spent.
-func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.FuelAnalytics, error) {
+// source so funders can see how their allocation was spent. Filters narrow
+// the fuel logs by fill date and/or a single funding source.
+func (r *Repository) GetFuelAnalytics(ctx context.Context, filters analyticsdomain.FuelFilters) (analyticsdomain.FuelAnalytics, error) {
 	out := analyticsdomain.FuelAnalytics{
 		GeneratedAt:    time.Now().UTC(),
 		ByAmbulance:    []analyticsdomain.FuelBucket{},
@@ -349,27 +350,50 @@ func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.Fuel
 		FundingSources: []analyticsdomain.FuelFundingSourceReport{},
 	}
 
+	// Shared WHERE fragment for fuel_logs (aliased fl).
+	conds := []string{"1=1"}
+	args := []any{}
+	pos := 1
+	if filters.DateFrom != nil {
+		conds = append(conds, fmt.Sprintf("fl.filled_at >= $%d", pos))
+		args = append(args, *filters.DateFrom)
+		pos++
+	}
+	if filters.DateTo != nil {
+		conds = append(conds, fmt.Sprintf("fl.filled_at <= $%d", pos))
+		args = append(args, *filters.DateTo)
+		pos++
+	}
+	if filters.FundingSourceID != nil && *filters.FundingSourceID != "" {
+		conds = append(conds, fmt.Sprintf("fl.funding_source_id = $%d", pos))
+		args = append(args, *filters.FundingSourceID)
+		pos++
+	}
+	whereSQL := strings.Join(conds, " AND ")
+
 	// Fleet-wide totals, split funded vs unfunded.
-	if err := r.db.QueryRow(ctx, `
+	if err := r.db.QueryRow(ctx, fmt.Sprintf(`
 		SELECT COUNT(1),
-			COALESCE(SUM(liters), 0),
-			COALESCE(SUM(cost), 0),
-			COALESCE(SUM(cost) FILTER (WHERE funding_source_id IS NOT NULL), 0),
-			COALESCE(SUM(cost) FILTER (WHERE funding_source_id IS NULL), 0)
-		FROM fuel_logs
-	`).Scan(&out.Totals.Logs, &out.Totals.Liters, &out.Totals.Cost, &out.Totals.FundedCost, &out.Totals.UnfundedCost); err != nil {
+			COALESCE(SUM(fl.liters), 0),
+			COALESCE(SUM(fl.cost), 0),
+			COALESCE(SUM(fl.cost) FILTER (WHERE fl.funding_source_id IS NOT NULL), 0),
+			COALESCE(SUM(fl.cost) FILTER (WHERE fl.funding_source_id IS NULL), 0)
+		FROM fuel_logs fl
+		WHERE %s
+	`, whereSQL), args...).Scan(&out.Totals.Logs, &out.Totals.Liters, &out.Totals.Cost, &out.Totals.FundedCost, &out.Totals.UnfundedCost); err != nil {
 		return out, err
 	}
 
 	// Fleet-wide consumption per ambulance.
-	ambRows, err := r.db.Query(ctx, `
+	ambRows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT fl.ambulance_id, COALESCE(a.plate_number, a.code, fl.ambulance_id::text),
 			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
 		FROM fuel_logs fl
 		LEFT JOIN ambulances a ON a.id = fl.ambulance_id
+		WHERE %s
 		GROUP BY fl.ambulance_id, a.plate_number, a.code
 		ORDER BY SUM(fl.cost) DESC NULLS LAST
-	`)
+	`, whereSQL), args...)
 	if err != nil {
 		return out, err
 	}
@@ -385,15 +409,19 @@ func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.Fuel
 		return out, err
 	}
 
-	// Fleet-wide monthly trend (last 12 months).
-	monthRows, err := r.db.Query(ctx, `
-		SELECT to_char(date_trunc('month', filled_at), 'YYYY-MM'),
-			COALESCE(SUM(liters), 0), COALESCE(SUM(cost), 0), COUNT(1)
-		FROM fuel_logs
-		WHERE filled_at >= date_trunc('month', now()) - INTERVAL '11 months'
+	// Fleet-wide monthly trend. With no explicit window, cap at 12 months.
+	monthWhere := whereSQL
+	if filters.DateFrom == nil && filters.DateTo == nil {
+		monthWhere += " AND fl.filled_at >= date_trunc('month', now()) - INTERVAL '11 months'"
+	}
+	monthRows, err := r.db.Query(ctx, fmt.Sprintf(`
+		SELECT to_char(date_trunc('month', fl.filled_at), 'YYYY-MM'),
+			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
+		FROM fuel_logs fl
+		WHERE %s
 		GROUP BY 1
 		ORDER BY 1
-	`)
+	`, monthWhere), args...)
 	if err != nil {
 		return out, err
 	}
@@ -409,13 +437,35 @@ func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.Fuel
 		return out, err
 	}
 
-	// Funding sources with their balances.
-	srcRows, err := r.db.Query(ctx, `
+	// Funding sources. Spent reflects the filtered window; Remaining is always
+	// against all-time spend so balances stay truthful under date filters.
+	srcConds := []string{"1=1"}
+	srcArgs := []any{}
+	srcPos := 1
+	if filters.FundingSourceID != nil && *filters.FundingSourceID != "" {
+		srcConds = append(srcConds, fmt.Sprintf("s.id = $%d", srcPos))
+		srcArgs = append(srcArgs, *filters.FundingSourceID)
+		srcPos++
+	}
+	windowCond := ""
+	if filters.DateFrom != nil {
+		windowCond += fmt.Sprintf(" AND fl.filled_at >= $%d", srcPos)
+		srcArgs = append(srcArgs, *filters.DateFrom)
+		srcPos++
+	}
+	if filters.DateTo != nil {
+		windowCond += fmt.Sprintf(" AND fl.filled_at <= $%d", srcPos)
+		srcArgs = append(srcArgs, *filters.DateTo)
+		srcPos++
+	}
+	srcRows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT s.id, s.organisation_name, s.funding_date, s.amount,
-			COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id), 0)
+			COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id%s), 0) AS window_spent,
+			COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id), 0) AS all_time_spent
 		FROM fuel_funding_sources s
+		WHERE %s
 		ORDER BY s.funding_date DESC, s.created_at DESC
-	`)
+	`, windowCond, strings.Join(srcConds, " AND ")), srcArgs...)
 	if err != nil {
 		return out, err
 	}
@@ -423,10 +473,11 @@ func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.Fuel
 	byID := map[string]*analyticsdomain.FuelFundingSourceReport{}
 	for srcRows.Next() {
 		var fs analyticsdomain.FuelFundingSourceReport
-		if err := srcRows.Scan(&fs.ID, &fs.OrganisationName, &fs.FundingDate, &fs.Amount, &fs.Spent); err != nil {
+		var allTimeSpent float64
+		if err := srcRows.Scan(&fs.ID, &fs.OrganisationName, &fs.FundingDate, &fs.Amount, &fs.Spent, &allTimeSpent); err != nil {
 			return out, err
 		}
-		fs.Remaining = fs.Amount - fs.Spent
+		fs.Remaining = fs.Amount - allTimeSpent
 		fs.ByAmbulance = []analyticsdomain.FuelBucket{}
 		fs.Monthly = []analyticsdomain.FuelMonthly{}
 		out.FundingSources = append(out.FundingSources, fs)
@@ -436,17 +487,17 @@ func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.Fuel
 		return out, err
 	}
 
-	// Per-source consumption by ambulance.
-	srcAmbRows, err := r.db.Query(ctx, `
+	// Per-source consumption by ambulance (within the filtered window).
+	srcAmbRows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT fl.funding_source_id, fl.ambulance_id,
 			COALESCE(a.plate_number, a.code, fl.ambulance_id::text),
 			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
 		FROM fuel_logs fl
 		LEFT JOIN ambulances a ON a.id = fl.ambulance_id
-		WHERE fl.funding_source_id IS NOT NULL
+		WHERE fl.funding_source_id IS NOT NULL AND %s
 		GROUP BY fl.funding_source_id, fl.ambulance_id, a.plate_number, a.code
 		ORDER BY SUM(fl.cost) DESC NULLS LAST
-	`)
+	`, whereSQL), args...)
 	if err != nil {
 		return out, err
 	}
@@ -465,15 +516,15 @@ func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.Fuel
 		return out, err
 	}
 
-	// Per-source monthly spend.
-	srcMonthRows, err := r.db.Query(ctx, `
+	// Per-source monthly spend (within the filtered window).
+	srcMonthRows, err := r.db.Query(ctx, fmt.Sprintf(`
 		SELECT fl.funding_source_id, to_char(date_trunc('month', fl.filled_at), 'YYYY-MM'),
 			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
 		FROM fuel_logs fl
-		WHERE fl.funding_source_id IS NOT NULL
+		WHERE fl.funding_source_id IS NOT NULL AND %s
 		GROUP BY 1, 2
 		ORDER BY 2
-	`)
+	`, whereSQL), args...)
 	if err != nil {
 		return out, err
 	}

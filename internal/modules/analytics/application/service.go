@@ -59,7 +59,24 @@ func (s *Service) GetSummary(ctx context.Context, q SummaryQuery) (analyticsdoma
 	return out, nil
 }
 
-// GetFuelAnalytics returns the consolidated fuel consumption report.
-func (s *Service) GetFuelAnalytics(ctx context.Context) (analyticsdomain.FuelAnalytics, error) {
-	return s.repo.GetFuelAnalytics(ctx)
+// GetFuelAnalytics returns the consolidated fuel consumption report,
+// optionally narrowed by fill-date range and/or a single funding source.
+func (s *Service) GetFuelAnalytics(ctx context.Context, q FuelQuery) (analyticsdomain.FuelAnalytics, error) {
+	filters := analyticsdomain.FuelFilters{}
+	if q.DateFrom != "" {
+		if t, err := time.Parse("2006-01-02", q.DateFrom); err == nil {
+			filters.DateFrom = &t
+		}
+	}
+	if q.DateTo != "" {
+		if t, err := time.Parse("2006-01-02", q.DateTo); err == nil {
+			end := t.Add(23*time.Hour + 59*time.Minute + 59*time.Second)
+			filters.DateTo = &end
+		}
+	}
+	if q.FundingSourceID != "" {
+		id := q.FundingSourceID
+		filters.FundingSourceID = &id
+	}
+	return s.repo.GetFuelAnalytics(ctx, filters)
 }

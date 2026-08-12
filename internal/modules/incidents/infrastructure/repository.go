@@ -625,6 +625,32 @@ func (r *Repository) UpdateIncidentStatus(ctx context.Context, id, status string
 	if err != nil {
 		return incidentdomain.Incident{}, err
 	}
+
+	// Keep dispatch assignments in sync: a terminal incident must not leave an
+	// "open" assignment behind (it blocks any future re-dispatch via
+	// uq_open_dispatch_per_incident and skews fleet availability).
+	switch strings.ToUpper(status) {
+	case "COMPLETED":
+		_, err = r.db.Exec(ctx, `
+			UPDATE dispatch_assignments
+			SET status='COMPLETED', updated_at=now()
+			WHERE incident_id=$1
+			  AND status IN ('PROPOSED','ASSIGNED','ACCEPTED','DEPARTED','ARRIVED_SCENE','PATIENT_LOADED')
+		`, id)
+	case "CANCELLED", "REJECTED", "AWAITING_ASSIGNMENT":
+		_, err = r.db.Exec(ctx, `
+			UPDATE dispatch_assignments
+			SET status='CANCELLED',
+			    cancellation_reason = COALESCE(cancellation_reason, 'Incident status changed to ' || $2),
+			    updated_at=now()
+			WHERE incident_id=$1
+			  AND status IN ('PROPOSED','ASSIGNED','ACCEPTED','DEPARTED','ARRIVED_SCENE','PATIENT_LOADED')
+		`, id, strings.ToUpper(status))
+	}
+	if err != nil {
+		return incidentdomain.Incident{}, err
+	}
+
 	return r.GetIncidentByID(ctx, id)
 }
 

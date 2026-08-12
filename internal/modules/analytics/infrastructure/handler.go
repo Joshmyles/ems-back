@@ -51,7 +51,12 @@ func (h *Handler) GetSummary(c *gin.Context) {
 // @Failure 500 {object} map[string]interface{}
 // @Router /analytics/fuel [get]
 func (h *Handler) GetFuelAnalytics(c *gin.Context) {
-	out, err := h.service.GetFuelAnalytics(c.Request.Context())
+	var q analyticsapp.FuelQuery
+	if err := c.ShouldBindQuery(&q); err != nil {
+		httpx.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	out, err := h.service.GetFuelAnalytics(c.Request.Context(), q)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, err.Error())
 		return

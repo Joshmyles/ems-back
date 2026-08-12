@@ -120,3 +120,10 @@ type FuelAnalytics struct {
 	Monthly        []FuelMonthly             `json:"monthly"`
 	FundingSources []FuelFundingSourceReport `json:"funding_sources"`
 }
+
+// FuelFilters narrows the fuel analytics aggregation.
+type FuelFilters struct {
+	DateFrom        *time.Time
+	DateTo          *time.Time
+	FundingSourceID *string
+}

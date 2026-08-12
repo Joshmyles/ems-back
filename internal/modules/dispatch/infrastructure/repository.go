@@ -231,6 +231,21 @@ func (r *Repository) ListRecommendations(ctx context.Context, params dto.ListRec
 }
 
 func (r *Repository) CreateAssignment(ctx context.Context, in dispatchdomain.DispatchAssignment) (dispatchdomain.DispatchAssignment, error) {
+	// Supersede any lingering open assignment for this incident: a dispatcher
+	// re-assigning an incident (e.g. after it was reverted to
+	// AWAITING_ASSIGNMENT) expects the stale assignment to be cancelled, not a
+	// unique-constraint error from uq_open_dispatch_per_incident.
+	if _, err := r.db.Exec(ctx, `
+		UPDATE dispatch_assignments
+		SET status = 'CANCELLED',
+		    cancellation_reason = COALESCE(cancellation_reason, 'Superseded by a new assignment'),
+		    updated_at = now()
+		WHERE incident_id = $1
+		  AND status IN ('PROPOSED','ASSIGNED','ACCEPTED','DEPARTED','ARRIVED_SCENE','PATIENT_LOADED')
+	`, in.IncidentID); err != nil {
+		return dispatchdomain.DispatchAssignment{}, err
+	}
+
 	q := `
 	INSERT INTO dispatch_assignments (
 		id, incident_id, ambulance_id, assigned_by_user_id, driver_user_id, lead_medic_user_id,
