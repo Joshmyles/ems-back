@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 
+	"dispatch/internal/modules/blood/application/dto"
 	blooddomain "dispatch/internal/modules/blood/domain"
 	platformdb "dispatch/internal/platform/db"
 )
@@ -13,6 +14,8 @@ type Repository interface {
 	CreateRequisition(ctx context.Context, req blooddomain.BloodRequisition) (blooddomain.BloodRequisition, error)
 	ListRequisitions(ctx context.Context, p platformdb.Pagination) ([]blooddomain.BloodRequisition, int64, error)
 	GetRequisitionByID(ctx context.Context, id string) (blooddomain.BloodRequisition, error)
+	UpdateRequisition(ctx context.Context, id string, req dto.UpdateBloodRequisitionRequest) (blooddomain.BloodRequisition, error)
+	DeleteRequisition(ctx context.Context, id string) error
 	UpdateRequisitionStatus(ctx context.Context, id, status string) error
 	CreateBroadcasts(ctx context.Context, requisitionID string, message string, targets []blooddomain.BloodBroadcastTarget) error
 	FindBroadcastTargets(ctx context.Context, bloodGroupID, bloodProductID string, unitsRequested int, destLat, destLon *float64, limit int) ([]blooddomain.BloodBroadcastTarget, error)

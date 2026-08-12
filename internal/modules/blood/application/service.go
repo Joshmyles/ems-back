@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -234,4 +235,84 @@ func (s *Service) MarkDelivered(ctx context.Context, assignmentID, requisitionID
 	req, _ := s.repo.GetRequisitionByID(ctx, requisitionID)
 	_ = s.repo.UpdateRequisitionStatus(ctx, requisitionID, "DELIVERED")
 	return s.repo.CreateStatusLog(ctx, requisitionID, req.Status, "DELIVERED", actorUserID, "blood delivered to destination")
+}
+
+// Errors surfaced by requisition edit/delete.
+var (
+	ErrRequisitionForbidden = errors.New("you can only modify your own requisitions")
+	ErrRequisitionLocked    = errors.New("requisition can no longer be modified at its current status")
+)
+
+// UpdateRequisition edits a requisition. Non-privileged actors (field medics)
+// may only edit their own, and only while it is OPEN or BROADCASTING.
+func (s *Service) UpdateRequisition(ctx context.Context, id string, req dto.UpdateBloodRequisitionRequest, actorUserID string, privileged bool) (blooddomain.BloodRequisition, error) {
+	existing, err := s.repo.GetRequisitionByID(ctx, id)
+	if err != nil {
+		return blooddomain.BloodRequisition{}, err
+	}
+	if !privileged {
+		if actorUserID == "" || existing.RequestedByUserID == nil || *existing.RequestedByUserID != actorUserID {
+			return blooddomain.BloodRequisition{}, ErrRequisitionForbidden
+		}
+	}
+	switch existing.Status {
+	case "OPEN", "BROADCASTING":
+	default:
+		return blooddomain.BloodRequisition{}, ErrRequisitionLocked
+	}
+	return s.repo.UpdateRequisition(ctx, id, req)
+}
+
+// DeleteRequisition removes a requisition (cascades to broadcasts/offers).
+// Blocked once a pickup workflow has started.
+func (s *Service) DeleteRequisition(ctx context.Context, id, actorUserID string, privileged bool) error {
+	existing, err := s.repo.GetRequisitionByID(ctx, id)
+	if err != nil {
+		return err
+	}
+	if !privileged {
+		if actorUserID == "" || existing.RequestedByUserID == nil || *existing.RequestedByUserID != actorUserID {
+			return ErrRequisitionForbidden
+		}
+	}
+	switch existing.Status {
+	case "OPEN", "BROADCASTING", "DECLINED", "CANCELLED", "EXPIRED":
+	default:
+		return ErrRequisitionLocked
+	}
+	return s.repo.DeleteRequisition(ctx, id)
+}
+
+// ErrDecisionNotAllowed guards the approve/decline transition.
+var ErrDecisionNotAllowed = errors.New("a decision can only be made while the requisition is OPEN or BROADCASTING")
+
+// DecideRequisition records the dispatcher/admin decision on a requisition:
+// APPROVED (granted) or DECLINED. Logged in the status history with the actor.
+func (s *Service) DecideRequisition(ctx context.Context, id, decision string, actorUserID *string, notes string) (blooddomain.BloodRequisition, error) {
+	decision = strings.ToUpper(strings.TrimSpace(decision))
+	if decision != "APPROVED" && decision != "DECLINED" {
+		return blooddomain.BloodRequisition{}, fmt.Errorf("decision must be APPROVED or DECLINED")
+	}
+	existing, err := s.repo.GetRequisitionByID(ctx, id)
+	if err != nil {
+		return blooddomain.BloodRequisition{}, err
+	}
+	switch existing.Status {
+	case "OPEN", "BROADCASTING":
+	default:
+		return blooddomain.BloodRequisition{}, ErrDecisionNotAllowed
+	}
+	if err := s.repo.UpdateRequisitionStatus(ctx, id, decision); err != nil {
+		return blooddomain.BloodRequisition{}, err
+	}
+	logNote := notes
+	if logNote == "" {
+		if decision == "APPROVED" {
+			logNote = "requisition approved (granted)"
+		} else {
+			logNote = "requisition declined"
+		}
+	}
+	_ = s.repo.CreateStatusLog(ctx, id, existing.Status, decision, actorUserID, logNote)
+	return s.repo.GetRequisitionByID(ctx, id)
 }

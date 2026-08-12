@@ -62,3 +62,21 @@ type MarkDeliveredRequest struct {
 	BloodRequisitionID string  `json:"blood_requisition_id" binding:"required"`
 	ActorUserID        *string `json:"actor_user_id"`
 }
+
+// UpdateBloodRequisitionRequest edits an existing requisition. Only supplied
+// fields change. Allowed while the requisition is still OPEN/BROADCASTING.
+type UpdateBloodRequisitionRequest struct {
+	PatientName           *string `json:"patient_name"`
+	PatientIdentifier     *string `json:"patient_identifier"`
+	ClinicalSummary       *string `json:"clinical_summary"`
+	Diagnosis             *string `json:"diagnosis"`
+	Indication            *string `json:"indication"`
+	ParitySummary         *string `json:"parity_summary"`
+	BloodGroupCode        *string `json:"blood_group_code"`
+	BloodProductCode      *string `json:"blood_product_code"`
+	UnitsRequested        *int    `json:"units_requested" binding:"omitempty,min=1"`
+	UrgencyLevel          *string `json:"urgency_level" binding:"omitempty,oneof=EMERGENCY URGENT ROUTINE"`
+	ReporterPhone         *string `json:"reporter_phone"`
+	RequestingFacilityID  *string `json:"requesting_facility_id"`
+	DestinationFacilityID *string `json:"destination_facility_id"`
+}

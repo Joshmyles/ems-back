@@ -1,19 +1,38 @@
 package http
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	bloodapp "dispatch/internal/modules/blood/application"
+	rbacapp "dispatch/internal/modules/rbac/application"
 	"dispatch/internal/modules/blood/application/dto"
 	platformdb "dispatch/internal/platform/db"
 	"dispatch/internal/platform/httpx"
 )
 
-type Handler struct{ service *bloodapp.Service }
+type Handler struct {
+	service *bloodapp.Service
+	rbac    *rbacapp.Service
+}
 
-func NewHandler(service *bloodapp.Service) *Handler { return &Handler{service: service} }
+func NewHandler(service *bloodapp.Service, rbac *rbacapp.Service) *Handler {
+	return &Handler{service: service, rbac: rbac}
+}
+
+// isPrivileged reports whether the caller holds dispatch.assign — the
+// dispatcher/admin capability that allows managing any requisition. Field
+// medics without it may only touch their own.
+func (h *Handler) isPrivileged(c *gin.Context) bool {
+	uid := c.GetString("user_id")
+	if uid == "" || h.rbac == nil {
+		return false
+	}
+	ok, err := h.rbac.HasPermission(c.Request.Context(), uid, "dispatch.assign", "GLOBAL", nil)
+	return err == nil && ok
+}
 
 // RaiseRequisition godoc
 //
@@ -268,4 +287,113 @@ func (h *Handler) MarkDelivered(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, gin.H{"message": "blood marked delivered"})
+}
+
+
+// UpdateRequisition godoc
+//
+//	@Summary		Update blood requisition
+//	@Description	Edits a requisition. Medics may only edit their own while it is still OPEN/BROADCASTING; dispatchers/admins may edit any.
+//	@Tags			Blood
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string								true	"Requisition ID"
+//	@Param			payload	body		dto.UpdateBloodRequisitionRequest	true	"Fields to update"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		403		{object}	map[string]interface{}
+//	@Failure		409		{object}	map[string]interface{}
+//	@Router			/blood/requisitions/{id} [put]
+func (h *Handler) UpdateRequisition(c *gin.Context) {
+	var req dto.UpdateBloodRequisitionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		httpx.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	out, err := h.service.UpdateRequisition(
+		c.Request.Context(), c.Param("id"), req,
+		c.GetString("user_id"), h.isPrivileged(c),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, bloodapp.ErrRequisitionForbidden):
+			httpx.Error(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, bloodapp.ErrRequisitionLocked):
+			httpx.Error(c, http.StatusConflict, err.Error())
+		default:
+			httpx.Error(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	httpx.OK(c, out)
+}
+
+// DeleteRequisition godoc
+//
+//	@Summary		Delete blood requisition
+//	@Description	Deletes a requisition. Medics may only delete their own; blocked once a pickup workflow has started.
+//	@Tags			Blood
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Requisition ID"
+//	@Success		204	"No Content"
+//	@Failure		403	{object}	map[string]interface{}
+//	@Failure		409	{object}	map[string]interface{}
+//	@Router			/blood/requisitions/{id} [delete]
+func (h *Handler) DeleteRequisition(c *gin.Context) {
+	err := h.service.DeleteRequisition(
+		c.Request.Context(), c.Param("id"),
+		c.GetString("user_id"), h.isPrivileged(c),
+	)
+	if err != nil {
+		switch {
+		case errors.Is(err, bloodapp.ErrRequisitionForbidden):
+			httpx.Error(c, http.StatusForbidden, err.Error())
+		case errors.Is(err, bloodapp.ErrRequisitionLocked):
+			httpx.Error(c, http.StatusConflict, err.Error())
+		default:
+			httpx.Error(c, http.StatusInternalServerError, err.Error())
+		}
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// DecideRequisition godoc
+//
+//	@Summary		Approve or decline a blood requisition
+//	@Description	Records the admin/dispatcher decision. Allowed while the requisition is OPEN or BROADCASTING.
+//	@Tags			Blood
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path		string	true	"Requisition ID"
+//	@Param			payload	body		object	true	"{\"decision\": \"APPROVED|DECLINED\", \"notes\": \"optional\"}"
+//	@Success		200		{object}	map[string]interface{}
+//	@Failure		400		{object}	map[string]interface{}
+//	@Failure		409		{object}	map[string]interface{}
+//	@Router			/blood/requisitions/{id}/decision [patch]
+func (h *Handler) DecideRequisition(c *gin.Context) {
+	var payload struct {
+		Decision string `json:"decision" binding:"required,oneof=APPROVED DECLINED approved declined"`
+		Notes    string `json:"notes"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		httpx.Error(c, http.StatusBadRequest, "decision must be APPROVED or DECLINED")
+		return
+	}
+	var actor *string
+	if uid := c.GetString("user_id"); uid != "" {
+		actor = &uid
+	}
+	out, err := h.service.DecideRequisition(c.Request.Context(), c.Param("id"), payload.Decision, actor, payload.Notes)
+	if err != nil {
+		if errors.Is(err, bloodapp.ErrDecisionNotAllowed) {
+			httpx.Error(c, http.StatusConflict, err.Error())
+			return
+		}
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.OK(c, out)
 }

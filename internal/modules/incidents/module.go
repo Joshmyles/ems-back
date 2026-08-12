@@ -15,7 +15,7 @@ import (
 func Register(deps types.ModuleDeps, rbacSvc *rbacapp.Service) {
 	repo := infrastructure.NewRepository(deps.DB)
 	notificationRepo := notificationsinfra.NewRepository(deps.DB)
-	notificationService := notificationsapp.NewService(notificationRepo, deps.Bus, deps.Logger)
+	notificationService := notificationsapp.NewService(notificationRepo, deps.Bus, deps.Logger, deps.PushSender)
 	service := incapp.NewService(repo, deps.Bus, deps.Logger, notificationService)
 	handler := http.NewHandler(service)
 	group := deps.Router.Group("/incidents")

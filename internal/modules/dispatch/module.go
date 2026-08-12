@@ -12,7 +12,7 @@ import (
 func Register(deps types.ModuleDeps) {
 	repo := infrastructure.NewRepository(deps.DB)
 	notificationRepo := notificationsinfra.NewRepository(deps.DB)
-	notificationService := notificationsapp.NewService(notificationRepo, deps.Bus, deps.Logger)
+	notificationService := notificationsapp.NewService(notificationRepo, deps.Bus, deps.Logger, deps.PushSender)
 	service := dispatchapp.NewService(repo, deps.Bus, notificationService)
 	h := http.NewHandler(service)
 	group := deps.Router.Group("/dispatch")

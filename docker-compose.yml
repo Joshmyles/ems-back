@@ -102,14 +102,17 @@ services:
       DB_PASSWORD: postgres
       DB_NAME: ems_db
       REDIS_ADDR: redis:6379
-      KAFKA_BROKERS: kafka:9092
+      # Notifications deliver in-process now; the app no longer talks to
+      # Kafka. The kafka/worker services below stay defined but unused.
+      KAFKA_BROKERS: disabled
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      FIREBASE_CREDENTIALS_FILE: /app/secrets/firebase-service-account.json
+    volumes:
+      - ./secrets:/app/secrets:ro
     depends_on:
       postgres:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      kafka:
         condition: service_healthy
 
   worker:

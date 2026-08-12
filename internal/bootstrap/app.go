@@ -78,15 +78,29 @@ func NewApp(ctx context.Context) (*App, error) {
 		bus = &events.NoopBus{}
 	}
 
+	// Push/SMS/email delivery happens in-process (no worker, no Kafka hop).
+	// A missing or invalid Firebase key disables sending but never blocks boot.
+	var pushSender types.NotificationSender
+	if sender, senderErr := notificationsinfra.NewSender(
+		cfg.Firebase.CredentialsFile,
+		notificationsinfra.NewDeviceTokenRepository(db),
+	); senderErr != nil {
+		log.Warn("push sender disabled: firebase credentials unavailable", zap.Error(senderErr))
+	} else {
+		pushSender = sender
+		log.Info("push sender initialised; notifications deliver in-process")
+	}
+
 	r := NewRouter()
 	api := r.Group("/api/v1")
 	RegisterModules(types.ModuleDeps{
-		Router: api,
-		DB:     db,
-		Redis:  redisClient,
-		Logger: log,
-		Bus:    bus,
-		Config: cfg,
+		Router:     api,
+		DB:         db,
+		Redis:      redisClient,
+		Logger:     log,
+		Bus:        bus,
+		Config:     cfg,
+		PushSender: pushSender,
 	})
 
 	srv := &http.Server{
@@ -149,12 +163,12 @@ func NewWorker(ctx context.Context) (*Worker, error) {
 	bus := events.NewKafkaBus(producer, log)
 
 	notificationRepo := notificationsinfra.NewRepository(db)
-	notificationService := notificationsapp.NewService(notificationRepo, bus, log)
 	tokenRepo := notificationsinfra.NewDeviceTokenRepository(db)
 	notificationSender, err := notificationsinfra.NewSender(cfg.Firebase.CredentialsFile, tokenRepo)
 	if err != nil {
 		return nil, err
 	}
+	notificationService := notificationsapp.NewService(notificationRepo, bus, log, notificationSender)
 
 	bloodRecipientFinder := bloodinfra.NewBroadcastRecipientFinder(db)
 

@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	bloodapp "dispatch/internal/modules/blood/application"
+	bloodappdto "dispatch/internal/modules/blood/application/dto"
 	blooddomain "dispatch/internal/modules/blood/domain"
 	platformdb "dispatch/internal/platform/db"
 )
@@ -412,4 +413,65 @@ func nullIfEmpty(s string) any {
 		return nil
 	}
 	return s
+}
+
+// UpdateRequisition applies the supplied fields to a requisition. Group and
+// product changes are resolved from their codes.
+func (r *Repository) UpdateRequisition(ctx context.Context, id string, req bloodappdto.UpdateBloodRequisitionRequest) (blooddomain.BloodRequisition, error) {
+	sets := []string{"updated_at = now()"}
+	args := []any{}
+	pos := 1
+
+	addString := func(column string, value *string) {
+		if value != nil {
+			sets = append(sets, fmt.Sprintf("%s = NULLIF($%d,'')", column, pos))
+			args = append(args, strings.TrimSpace(*value))
+			pos++
+		}
+	}
+	addString("patient_name", req.PatientName)
+	addString("patient_identifier", req.PatientIdentifier)
+	addString("diagnosis", req.Diagnosis)
+	addString("indication", req.Indication)
+	addString("parity_summary", req.ParitySummary)
+	addString("reporter_phone", req.ReporterPhone)
+	addString("requesting_facility_id", req.RequestingFacilityID)
+	addString("destination_facility_id", req.DestinationFacilityID)
+	if req.ClinicalSummary != nil && strings.TrimSpace(*req.ClinicalSummary) != "" {
+		sets = append(sets, fmt.Sprintf("clinical_summary = $%d", pos))
+		args = append(args, strings.TrimSpace(*req.ClinicalSummary))
+		pos++
+	}
+	if req.BloodGroupCode != nil {
+		sets = append(sets, fmt.Sprintf("blood_group_id = (SELECT id FROM blood_groups WHERE code = $%d)", pos))
+		args = append(args, strings.ToUpper(strings.TrimSpace(*req.BloodGroupCode)))
+		pos++
+	}
+	if req.BloodProductCode != nil {
+		sets = append(sets, fmt.Sprintf("blood_product_id = (SELECT id FROM blood_products WHERE code = $%d)", pos))
+		args = append(args, strings.ToUpper(strings.TrimSpace(*req.BloodProductCode)))
+		pos++
+	}
+	if req.UnitsRequested != nil {
+		sets = append(sets, fmt.Sprintf("units_requested = $%d", pos))
+		args = append(args, *req.UnitsRequested)
+		pos++
+	}
+	if req.UrgencyLevel != nil {
+		sets = append(sets, fmt.Sprintf("urgency_level = $%d", pos))
+		args = append(args, strings.ToUpper(strings.TrimSpace(*req.UrgencyLevel)))
+		pos++
+	}
+
+	args = append(args, id)
+	q := fmt.Sprintf("UPDATE blood_requisitions SET %s WHERE id = $%d", strings.Join(sets, ", "), pos)
+	if _, err := r.db.Exec(ctx, q, args...); err != nil {
+		return blooddomain.BloodRequisition{}, err
+	}
+	return r.GetRequisitionByID(ctx, id)
+}
+
+func (r *Repository) DeleteRequisition(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM blood_requisitions WHERE id = $1`, id)
+	return err
 }

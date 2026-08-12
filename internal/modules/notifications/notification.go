@@ -10,7 +10,7 @@ import (
 
 func Register(deps types.ModuleDeps, rbacSvc *rbacapp.Service) {
 	repo := infrastructure.NewRepository(deps.DB)
-	service := notifapp.NewService(repo, deps.Bus, deps.Logger)
+	service := notifapp.NewService(repo, deps.Bus, deps.Logger, deps.PushSender)
 	handler := http.NewHandler(service)
 	group := deps.Router.Group("/notifications")
 	http.RegisterRoutes(group, handler, rbacSvc)
