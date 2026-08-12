@@ -8,8 +8,9 @@ import (
 )
 
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler, rbacSvc *rbacapp.Service) {
-	rg.POST("/requisitions", rbacmiddleware.RequirePermission(rbacSvc, "incidents.create"), h.RaiseRequisition)
-	rg.GET("/requisitions", rbacmiddleware.RequirePermission(rbacSvc, "incidents.read"), h.ListRequisitions)
+	// MEDIC: field medics raise blood requisitions from the mobile app.
+	rg.POST("/requisitions", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "incidents.create", "MEDIC"), h.RaiseRequisition)
+	rg.GET("/requisitions", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "incidents.read", "MEDIC"), h.ListRequisitions)
 	rg.POST("/requisitions/:id/broadcast", rbacmiddleware.RequirePermission(rbacSvc, "dispatch.assign"), h.Broadcast)
 	rg.GET("/requisitions/:id/offers", rbacmiddleware.RequirePermission(rbacSvc, "incidents.read"), h.ListOffers)
 	rg.POST("/offers", rbacmiddleware.RequirePermission(rbacSvc, "incidents.create"), h.CreateOffer)

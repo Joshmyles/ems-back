@@ -34,6 +34,13 @@ func (h *Handler) RaiseRequisition(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	// Stamp the requester from the auth context so "my requests" filtering
+	// works without trusting the client to identify itself.
+	if req.RequestedByUserID == nil {
+		if uid := c.GetString("user_id"); uid != "" {
+			req.RequestedByUserID = &uid
+		}
+	}
 	out, err := h.service.RaiseRequisition(c.Request.Context(), req)
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, err.Error())
@@ -84,10 +91,11 @@ func (h *Handler) ListRequisitions(c *gin.Context) {
 		"urgency_level":   "br.urgency_level",
 		"units_requested": "br.units_requested",
 	}, map[string]struct{}{
-		"status":        {},
-		"urgency_level": {},
-		"date_from":     {},
-		"date_to":       {},
+		"status":               {},
+		"urgency_level":        {},
+		"date_from":            {},
+		"date_to":              {},
+		"requested_by_user_id": {},
 	})
 	out, err := h.service.ListRequisitions(c.Request.Context(), p)
 	if err != nil {

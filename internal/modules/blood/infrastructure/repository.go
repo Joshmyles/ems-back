@@ -127,6 +127,10 @@ func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Paginati
 			where = append(where, fmt.Sprintf(`br.created_at <= $%d`, argPos))
 			args = append(args, v)
 			argPos++
+		case "requested_by_user_id":
+			where = append(where, fmt.Sprintf(`br.requested_by_user_id = $%d`, argPos))
+			args = append(args, v)
+			argPos++
 		}
 	}
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
