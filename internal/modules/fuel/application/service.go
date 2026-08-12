@@ -68,19 +68,20 @@ func (s *Service) Create(ctx context.Context, req CreateFuelLogRequest, filledBy
 	}
 
 	in := domain.FuelLog{
-		AmbulanceID: req.AmbulanceID,
-		FuelType:    req.FuelType,
-		Liters:      req.Liters,
-		UnitCost:    req.UnitCost,
-		Cost:        req.Cost,
-		OdometerKM:  req.OdometerKM,
-		StationName: req.StationName,
-		FilledAt:    filledAt,
-		FilledBy:    filledByUserID,
-		Notes:       req.Notes,
-		PublicToken: token,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		AmbulanceID:     req.AmbulanceID,
+		FuelType:        req.FuelType,
+		Liters:          req.Liters,
+		UnitCost:        req.UnitCost,
+		Cost:            req.Cost,
+		OdometerKM:      req.OdometerKM,
+		StationName:     req.StationName,
+		FilledAt:        filledAt,
+		FilledBy:        filledByUserID,
+		Notes:           req.Notes,
+		PublicToken:     token,
+		FundingSourceID: req.FundingSourceID,
+		CreatedAt:       now,
+		UpdatedAt:       now,
 	}
 	// Total cost is derived from the user-entered unit cost: cost = liters * unit_cost.
 	if req.UnitCost != nil {
@@ -112,6 +113,32 @@ func (s *Service) Update(ctx context.Context, id string, req UpdateFuelLogReques
 
 func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
+}
+
+// ListFundingSources returns all fuel funding sources with computed
+// spent/remaining balances.
+func (s *Service) ListFundingSources(ctx context.Context) ([]domain.FundingSource, error) {
+	return s.repo.ListFundingSources(ctx)
+}
+
+func (s *Service) CreateFundingSource(ctx context.Context, req CreateFundingSourceRequest) (domain.FundingSource, error) {
+	in := domain.FundingSource{
+		OrganisationName: req.OrganisationName,
+		Amount:           roundMoney(req.Amount),
+		Notes:            req.Notes,
+	}
+	if req.FundingDate != nil {
+		d, err := time.Parse("2006-01-02", *req.FundingDate)
+		if err != nil {
+			return domain.FundingSource{}, err
+		}
+		in.FundingDate = d
+	}
+	return s.repo.CreateFundingSource(ctx, in)
+}
+
+func (s *Service) DeleteFundingSource(ctx context.Context, id string) error {
+	return s.repo.DeleteFundingSource(ctx, id)
 }
 
 // GetPublic returns the QR-scanned view of a fuel log by its public token.

@@ -3,15 +3,16 @@ package application
 import "time"
 
 type CreateFuelLogRequest struct {
-	AmbulanceID string     `json:"ambulance_id" binding:"required,uuid"`
-	FuelType    *string    `json:"fuel_type,omitempty"`
-	Liters      float64    `json:"liters" binding:"required,gt=0"`
-	UnitCost    *float64   `json:"unit_cost,omitempty" binding:"omitempty,gte=0"`
-	Cost        *float64   `json:"cost,omitempty"`
-	OdometerKM  *int       `json:"odometer_km,omitempty"`
-	StationName *string    `json:"station_name,omitempty"`
-	FilledAt    *time.Time `json:"filled_at,omitempty"`
-	Notes       *string    `json:"notes,omitempty"`
+	AmbulanceID     string     `json:"ambulance_id" binding:"required,uuid"`
+	FuelType        *string    `json:"fuel_type,omitempty"`
+	Liters          float64    `json:"liters" binding:"required,gt=0"`
+	UnitCost        *float64   `json:"unit_cost,omitempty" binding:"omitempty,gte=0"`
+	Cost            *float64   `json:"cost,omitempty"`
+	OdometerKM      *int       `json:"odometer_km,omitempty"`
+	StationName     *string    `json:"station_name,omitempty"`
+	FilledAt        *time.Time `json:"filled_at,omitempty"`
+	Notes           *string    `json:"notes,omitempty"`
+	FundingSourceID *string    `json:"funding_source_id,omitempty" binding:"omitempty,uuid"`
 }
 
 type UpdateFuelLogRequest struct {
@@ -23,6 +24,16 @@ type UpdateFuelLogRequest struct {
 	StationName *string    `json:"station_name,omitempty"`
 	FilledAt    *time.Time `json:"filled_at,omitempty"`
 	Notes       *string    `json:"notes,omitempty"`
+	// Empty string clears the link; a UUID re-points it.
+	FundingSourceID *string `json:"funding_source_id,omitempty"`
+}
+
+// CreateFundingSourceRequest registers a pot of fuel money.
+type CreateFundingSourceRequest struct {
+	OrganisationName string  `json:"organisation_name" binding:"required"`
+	FundingDate      *string `json:"funding_date,omitempty" binding:"omitempty,datetime=2006-01-02"`
+	Amount           float64 `json:"amount" binding:"required,gte=0"`
+	Notes            *string `json:"notes,omitempty"`
 }
 
 // ConfirmFuelDispenseRequest is submitted from the public QR page by the

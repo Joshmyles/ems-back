@@ -201,6 +201,68 @@ func (h *Handler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// ListFundingSources godoc
+//
+//	@Summary		List fuel funding sources
+//	@Description	Returns all funding sources with computed spent and remaining balances
+//	@Tags			Fuel
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{array}	domain.FundingSource
+//	@Router			/fuel/funding-sources [get]
+func (h *Handler) ListFundingSources(c *gin.Context) {
+	items, err := h.svc.ListFundingSources(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": items}})
+}
+
+// CreateFundingSource godoc
+//
+//	@Summary		Create fuel funding source
+//	@Description	Registers a pot of fuel money that fuel logs can draw from
+//	@Tags			Fuel
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			payload	body		fuelapp.CreateFundingSourceRequest	true	"Funding source payload"
+//	@Success		201		{object}	domain.FundingSource
+//	@Failure		400		{object}	map[string]any
+//	@Router			/fuel/funding-sources [post]
+func (h *Handler) CreateFundingSource(c *gin.Context) {
+	var req fuelapp.CreateFundingSourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "organisation name and a non-negative amount are required"})
+		return
+	}
+	created, err := h.svc.CreateFundingSource(c.Request.Context(), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": created})
+}
+
+// DeleteFundingSource godoc
+//
+//	@Summary		Delete fuel funding source
+//	@Description	Removes a funding source; linked fuel logs keep their record but lose the link
+//	@Tags			Fuel
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path	string	true	"Funding source ID"
+//	@Success		204	"No Content"
+//	@Router			/fuel/funding-sources/{id} [delete]
+func (h *Handler) DeleteFundingSource(c *gin.Context) {
+	if err := h.svc.DeleteFundingSource(c.Request.Context(), c.Param("id")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
 // GetPublicFuelLog godoc
 //
 //	@Summary		Get public fuel log by QR token

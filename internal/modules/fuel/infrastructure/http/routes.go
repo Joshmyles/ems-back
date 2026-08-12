@@ -13,6 +13,10 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, rbacSvc *rbacapp.Service) {
 	rg.POST("/logs", rbacmiddleware.RequirePermission(rbacSvc, "fuel.manage"), h.Create)
 	rg.PUT("/logs/:id", rbacmiddleware.RequirePermission(rbacSvc, "fuel.manage"), h.Update)
 	rg.DELETE("/logs/:id", rbacmiddleware.RequirePermission(rbacSvc, "fuel.manage"), h.Delete)
+
+	rg.GET("/funding-sources", rbacmiddleware.RequirePermission(rbacSvc, "fuel.read"), h.ListFundingSources)
+	rg.POST("/funding-sources", rbacmiddleware.RequirePermission(rbacSvc, "fuel.manage"), h.CreateFundingSource)
+	rg.DELETE("/funding-sources/:id", rbacmiddleware.RequirePermission(rbacSvc, "fuel.manage"), h.DeleteFundingSource)
 }
 
 // RegisterPublicRoutes wires the unauthenticated QR-scan endpoints. These are

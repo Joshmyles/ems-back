@@ -44,7 +44,9 @@ const fuelLogColumns = `
 	fl.attendant_notes,
 	fl.confirmed_at,
 	fl.created_at,
-	fl.updated_at`
+	fl.updated_at,
+	fl.funding_source_id,
+	(SELECT s.organisation_name FROM fuel_funding_sources s WHERE s.id = fl.funding_source_id)`
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -55,6 +57,7 @@ func scanFuelLog(row rowScanner) (domain.FuelLog, error) {
 	var fl domain.FuelLog
 	var fuelType, stationName, filledBy, notes *string
 	var attendantName, attendantPhone, attendantNotes *string
+	var fundingSourceID, fundingSourceName *string
 	var dispensedAt, confirmedAt *time.Time
 	var unitCost, cost *float64
 	var odometerKM *int
@@ -80,6 +83,8 @@ func scanFuelLog(row rowScanner) (domain.FuelLog, error) {
 		&confirmedAt,
 		&fl.CreatedAt,
 		&fl.UpdatedAt,
+		&fundingSourceID,
+		&fundingSourceName,
 	); err != nil {
 		return domain.FuelLog{}, err
 	}
@@ -96,6 +101,8 @@ func scanFuelLog(row rowScanner) (domain.FuelLog, error) {
 	fl.AttendantPhone = attendantPhone
 	fl.AttendantNotes = attendantNotes
 	fl.ConfirmedAt = confirmedAt
+	fl.FundingSourceID = fundingSourceID
+	fl.FundingSourceName = fundingSourceName
 	return fl, nil
 }
 
@@ -218,11 +225,11 @@ func (r *Repository) Create(ctx context.Context, in domain.FuelLog) (domain.Fuel
 	const q = `
 INSERT INTO fuel_logs (
 	id, ambulance_id, fuel_type, liters, unit_cost, cost, odometer_km, station_name,
-	filled_at, filled_by, notes, public_token, created_at, updated_at
+	filled_at, filled_by, notes, public_token, funding_source_id, created_at, updated_at
 )
 VALUES (
 	gen_random_uuid(), $1,$2,$3,$4,$5,$6,$7,
-	$8,$9,$10,$11, now(), now()
+	$8,$9,$10,$11,$12, now(), now()
 )
 RETURNING id`
 
@@ -246,6 +253,7 @@ RETURNING id`
 		in.FilledBy,
 		in.Notes,
 		in.PublicToken,
+		in.FundingSourceID,
 	).Scan(&id); err != nil {
 		return domain.FuelLog{}, err
 	}
@@ -295,6 +303,12 @@ func (r *Repository) Update(ctx context.Context, id string, req fuelapp.UpdateFu
 	if req.Notes != nil {
 		sets = append(sets, fmt.Sprintf("notes = $%d", pos))
 		args = append(args, *req.Notes)
+		pos++
+	}
+	if req.FundingSourceID != nil {
+		// Empty string clears the link.
+		sets = append(sets, fmt.Sprintf("funding_source_id = NULLIF($%d,'')::uuid", pos))
+		args = append(args, *req.FundingSourceID)
 		pos++
 	}
 
@@ -441,4 +455,62 @@ WHERE public_token = $1 AND dispense_confirmed = FALSE`
 		return 0, err
 	}
 	return tag.RowsAffected(), nil
+}
+
+// ── Funding sources ─────────────────────────────────────────────────────────
+
+func (r *Repository) ListFundingSources(ctx context.Context) ([]domain.FundingSource, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT s.id, s.organisation_name, s.funding_date, s.amount, s.notes,
+			COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id), 0) AS spent,
+			s.created_at, s.updated_at
+		FROM fuel_funding_sources s
+		ORDER BY s.funding_date DESC, s.created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.FundingSource, 0)
+	for rows.Next() {
+		var fs domain.FundingSource
+		if err := rows.Scan(
+			&fs.ID, &fs.OrganisationName, &fs.FundingDate, &fs.Amount, &fs.Notes,
+			&fs.Spent, &fs.CreatedAt, &fs.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		fs.Remaining = fs.Amount - fs.Spent
+		items = append(items, fs)
+	}
+	return items, rows.Err()
+}
+
+func (r *Repository) CreateFundingSource(ctx context.Context, in domain.FundingSource) (domain.FundingSource, error) {
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO fuel_funding_sources (organisation_name, funding_date, amount, notes)
+		VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4)
+		RETURNING id, organisation_name, funding_date, amount, notes, created_at, updated_at
+	`, in.OrganisationName, nullableTime(in.FundingDate), in.Amount, in.Notes).Scan(
+		&in.ID, &in.OrganisationName, &in.FundingDate, &in.Amount, &in.Notes, &in.CreatedAt, &in.UpdatedAt,
+	)
+	if err != nil {
+		return domain.FundingSource{}, err
+	}
+	in.Remaining = in.Amount
+	return in, nil
+}
+
+func (r *Repository) DeleteFundingSource(ctx context.Context, id string) error {
+	_, err := r.db.Exec(ctx, `DELETE FROM fuel_funding_sources WHERE id = $1`, id)
+	return err
+}
+
+// nullableTime maps the zero time to NULL so SQL defaults apply.
+func nullableTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
 }

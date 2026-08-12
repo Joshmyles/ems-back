@@ -22,4 +22,9 @@ type Repository interface {
 
 	GetPublicByToken(ctx context.Context, token string) (domain.FuelLogPublicView, error)
 	ConfirmDispense(ctx context.Context, token string, req ConfirmFuelDispenseRequest) (int64, error)
+
+	// Funding sources: spent/remaining are computed from linked fuel logs.
+	ListFundingSources(ctx context.Context) ([]domain.FundingSource, error)
+	CreateFundingSource(ctx context.Context, in domain.FundingSource) (domain.FundingSource, error)
+	DeleteFundingSource(ctx context.Context, id string) error
 }
