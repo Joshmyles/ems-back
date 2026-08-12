@@ -279,6 +279,20 @@ WHERE a.id = $1`
 	return a, nil
 }
 
+func (r *Repository) NextAmbulanceCode(ctx context.Context) (string, error) {
+	// Derive the next code from the highest existing AMB-<n> suffix so codes
+	// stay unique even after deletions.
+	var next int
+	if err := r.db.QueryRow(ctx, `
+		SELECT COALESCE(MAX((regexp_match(code, '^AMB-(\d+)$'))[1]::int), 0) + 1
+		FROM ambulances
+		WHERE code ~ '^AMB-\d+$'
+	`).Scan(&next); err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("AMB-%04d", next), nil
+}
+
 func (r *Repository) Create(ctx context.Context, in domain.Ambulance) (domain.Ambulance, error) {
 	const q = `
 INSERT INTO ambulances (

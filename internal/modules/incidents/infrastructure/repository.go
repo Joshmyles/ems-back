@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -39,6 +40,95 @@ func (r *Repository) EnsureUnclassifiedIncidentType(ctx context.Context, id stri
 	return err
 }
 
+func (r *Repository) ListActiveUserIDsByRoleCodes(ctx context.Context, roleCodes []string) ([]string, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT DISTINCT ur.user_id
+		FROM user_roles ur
+		JOIN roles ro ON ro.id = ur.role_id
+		JOIN users u ON u.id = ur.user_id
+		WHERE ro.code = ANY($1)
+		  AND ur.active = TRUE
+		  AND u.deleted_at IS NULL
+	`, roleCodes)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var userIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		userIDs = append(userIDs, id)
+	}
+	return userIDs, rows.Err()
+}
+
+func (r *Repository) GetLatestTriageForIncident(ctx context.Context, incidentID string) (incidentdomain.TriageInfo, bool, error) {
+	var (
+		out       incidentdomain.TriageInfo
+		sessionID string
+	)
+	err := r.db.QueryRow(ctx, `
+		SELECT s.id, tq.name, s.triage_mode, s.total_score, s.auto_dispatch_eligible,
+			COALESCE(rpl.code,''), COALESCE(s.notes,''), s.triaged_at,
+			COALESCE(TRIM(u.first_name || ' ' || u.last_name), '')
+		FROM incident_triage_sessions s
+		JOIN triage_questionnaires tq ON tq.id = s.questionnaire_id
+		LEFT JOIN ref_priority_levels rpl ON rpl.id = s.derived_priority_level_id
+		LEFT JOIN users u ON u.id = s.triaged_by_user_id
+		WHERE s.incident_id = $1
+		ORDER BY s.triaged_at DESC
+		LIMIT 1
+	`, incidentID).Scan(
+		&sessionID, &out.QuestionnaireName, &out.TriageMode, &out.TotalScore, &out.AutoDispatchEligible,
+		&out.DerivedPriorityCode, &out.Notes, &out.TriagedAt, &out.TriagedByName,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return incidentdomain.TriageInfo{}, false, nil
+	}
+	if err != nil {
+		return incidentdomain.TriageInfo{}, false, err
+	}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT r.question_code, q.question_text, r.response_type,
+			COALESCE(
+				o.option_label,
+				r.response_value_text,
+				CASE WHEN r.response_value_bool IS NOT NULL THEN
+					CASE WHEN r.response_value_bool THEN 'Yes' ELSE 'No' END
+				END,
+				r.response_value_int::text,
+				''
+			),
+			r.score_awarded
+		FROM incident_triage_responses r
+		JOIN triage_questions q ON q.id = r.question_id
+		LEFT JOIN triage_question_options o ON o.id = r.selected_option_id
+		WHERE r.triage_session_id = $1
+		ORDER BY q.display_order, r.question_code
+	`, sessionID)
+	if err != nil {
+		return incidentdomain.TriageInfo{}, false, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var answer incidentdomain.TriageAnswer
+		if err := rows.Scan(&answer.QuestionCode, &answer.QuestionText, &answer.ResponseType, &answer.Answer, &answer.ScoreAwarded); err != nil {
+			return incidentdomain.TriageInfo{}, false, err
+		}
+		out.Answers = append(out.Answers, answer)
+	}
+	if err := rows.Err(); err != nil {
+		return incidentdomain.TriageInfo{}, false, err
+	}
+	return out, true, nil
+}
+
 func nilIfBlank(s *string) *string {
 	if s == nil {
 		return nil
@@ -73,14 +163,14 @@ func (r *Repository) CreateIncident(ctx context.Context, in incidentdomain.Incid
 		summary, description, district_id, pickup_location, receiving_facility_id, referring_facility_id,
 		village, parish, subcounty, landmark,
 		latitude, longitude, verification_status, status, reported_at, created_by_user_id,
-		respiratory_rate, spo2, pulse, bp, temperature, created_at, updated_at
+		respiratory_rate, spo2, pulse, bp, temperature, casualty_count, created_at, updated_at
 	) VALUES (
 		$1,$2,$3,$4,$5,$6,$7,
 		$8,$9,$10,$11,$12,$13,
 		$14,$15,$16,$17,$18,$19,
 		$20,$21,$22,$23,
 		$24,$25,$26,$27,$28,$29,
-		$30,$31,$32,$33,$34,now(),now()
+		$30,$31,$32,$33,$34,$35,now(),now()
 	)
 	RETURNING triaged_by_user_id, triaged_at, assigned_at, closed_at, created_at, updated_at`
 
@@ -119,6 +209,7 @@ func (r *Repository) CreateIncident(ctx context.Context, in incidentdomain.Incid
 		in.Pulse,
 		in.BP,
 		in.Temperature,
+		in.CasualtyCount,
 	).Scan(
 		&in.TriagedByUserID,
 		&in.TriagedAt,
@@ -141,6 +232,7 @@ func (r *Repository) GetIncidentByID(ctx context.Context, id string) (incidentdo
 		COALESCE(i.patient_name,''), COALESCE(i.patient_phone,''), COALESCE(i.patient_age_group,''), COALESCE(i.patient_sex,''),
 		COALESCE(i.patient_details_diagnosis,''),
 		COALESCE(i.respiratory_rate,''), COALESCE(i.spo2,''), COALESCE(i.pulse,''), COALESCE(i.bp,''), COALESCE(i.temperature,''),
+		i.casualty_count,
 		i.incident_type_id, COALESCE(rit.name,''), i.severity_level_id, COALESCE(rsl.name,''),
 		i.priority_level_id, COALESCE(rpl.code,''), COALESCE(rpl.name,''), COALESCE(i.summary,''), COALESCE(i.description,''),
 		i.district_id, COALESCE(rd.name,''), COALESCE(i.pickup_location,''),
@@ -160,6 +252,7 @@ func (r *Repository) GetIncidentByID(ctx context.Context, id string) (incidentdo
 		&out.PatientName, &out.PatientPhone, &out.PatientAgeGroup, &out.PatientSex,
 		&out.PatientDetailsDiagnosis,
 		&out.RespiratoryRate, &out.Spo2, &out.Pulse, &out.BP, &out.Temperature,
+		&out.CasualtyCount,
 		&out.IncidentTypeID, &out.IncidentTypeName, &out.SeverityLevelID, &out.SeverityName,
 		&out.PriorityLevelID, &out.PriorityCode, &out.PriorityName, &out.Summary, &out.Description,
 		&out.DistrictID, &out.DistrictName, &out.PickupLocation,

@@ -13,18 +13,32 @@ import (
 	"go.uber.org/zap"
 
 	incidentdomain "dispatch/internal/modules/incidents/domain"
+	notifdomain "dispatch/internal/modules/notifications/domain"
 	platformdb "dispatch/internal/platform/db"
 	"dispatch/internal/platform/events"
 )
 
-type Service struct {
-	repo Repository
-	bus  events.Publisher
-	log  *zap.Logger
+// dispatcherNotifyRoles are the roles alerted whenever a new incident is reported.
+var dispatcherNotifyRoles = []string{"DISPATCHER", "DISPATCH_SUPERVISOR"}
+
+type NotificationCreator interface {
+	Create(ctx context.Context,
+		typ, channel string,
+		recipientUserID, recipientPhone, recipientEmail, title, linkedEntityType *string,
+		body string,
+		linkedEntityID *string,
+	) (notifdomain.Notification, error)
 }
 
-func NewService(repo Repository, bus events.Publisher, log *zap.Logger) *Service {
-	return &Service{repo: repo, bus: bus, log: log}
+type Service struct {
+	repo          Repository
+	bus           events.Publisher
+	log           *zap.Logger
+	notifications NotificationCreator
+}
+
+func NewService(repo Repository, bus events.Publisher, log *zap.Logger, notifications NotificationCreator) *Service {
+	return &Service{repo: repo, bus: bus, log: log, notifications: notifications}
 }
 
 func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest) (CreateIncidentResponse, error) {
@@ -73,6 +87,7 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 		Pulse:                   strings.TrimSpace(req.Pulse),
 		BP:                      strings.TrimSpace(req.BP),
 		Temperature:             strings.TrimSpace(req.Temperature),
+		CasualtyCount:           req.CasualtyCount,
 		IncidentTypeID:          incidentTypeID,
 		SeverityLevelID:         req.SeverityLevelID,
 		PriorityLevelID:         req.PriorityLevelID,
@@ -121,6 +136,8 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 		resp.DispatchRecommendationHint = buildDispatchRecommendationHint(triage.AutoDispatchEligible, triage.DerivedPriorityCode)
 	}
 
+	s.notifyIncidentReported(ctx, resp.Incident)
+
 	_ = s.bus.Publish(ctx, "incident.created", events.Event{
 		ID:          uuid.NewString(),
 		Topic:       "incident.created",
@@ -137,6 +154,54 @@ func (s *Service) CreateIncident(ctx context.Context, req CreateIncidentRequest)
 	})
 
 	return resp, nil
+}
+
+// notifyIncidentReported alerts dispatch staff that a new incident needs
+// attention. Failures are logged, never propagated: notification delivery
+// must not fail incident creation.
+func (s *Service) notifyIncidentReported(ctx context.Context, inc incidentdomain.Incident) {
+	if s.notifications == nil {
+		return
+	}
+
+	recipients, err := s.repo.ListActiveUserIDsByRoleCodes(ctx, dispatcherNotifyRoles)
+	if err != nil {
+		s.log.Warn("resolve dispatcher recipients for incident notification", zap.Error(err))
+		return
+	}
+
+	title := "New incident reported"
+	body := fmt.Sprintf("Incident %s has been reported and needs dispatch.", inc.IncidentNumber)
+	if summary := strings.TrimSpace(inc.Summary); summary != "" {
+		body = fmt.Sprintf("Incident %s: %s", inc.IncidentNumber, summary)
+	}
+	entityType := "INCIDENT"
+
+	for _, recipientID := range recipients {
+		if inc.CreatedByUserID != nil && recipientID == *inc.CreatedByUserID {
+			continue
+		}
+		recipientID := recipientID
+		for _, channel := range []string{"IN_APP", "PUSH"} {
+			if _, err := s.notifications.Create(
+				ctx,
+				"INCIDENT_REPORTED",
+				channel,
+				&recipientID,
+				nil,
+				nil,
+				&title,
+				&entityType,
+				body,
+				&inc.ID,
+			); err != nil {
+				s.log.Warn("create incident notification",
+					zap.String("recipient", recipientID),
+					zap.String("channel", channel),
+					zap.Error(err))
+			}
+		}
+	}
 }
 
 func (s *Service) persistTriage(ctx context.Context, incidentID, questionnaireCode string, inputs []TriageResponseInput, notes string, actorUserID *string, auditMessage string) (incidentdomain.PersistedTriageSession, error) {
@@ -329,6 +394,12 @@ func (s *Service) GetIncidentByIDForAssignee(ctx context.Context, id, userID str
 		return incidentdomain.Incident{}, ErrIncidentNotAssigned
 	}
 	return s.repo.GetIncidentByID(ctx, id)
+}
+
+// GetIncidentTriage returns the latest triage session (questions and answers)
+// for an incident; found=false when no triage has been recorded yet.
+func (s *Service) GetIncidentTriage(ctx context.Context, incidentID string) (incidentdomain.TriageInfo, bool, error) {
+	return s.repo.GetLatestTriageForIncident(ctx, incidentID)
 }
 
 func (s *Service) ListIncidents(ctx context.Context, params ListIncidentsParams) (platformdb.PageResult[incidentdomain.Incident], error) {

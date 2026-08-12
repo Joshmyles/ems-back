@@ -79,6 +79,7 @@ func (h *Handler) List(c *gin.Context) {
 			map[string]struct{}{
 				"status":    {},
 				"is_active": {},
+				"role":      {},
 			},
 		),
 	}

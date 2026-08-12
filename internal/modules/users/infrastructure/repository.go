@@ -109,6 +109,14 @@ func (r *Repository) List(ctx context.Context, params dto.ListUsersParams) ([]do
 			baseWhere = append(baseWhere, fmt.Sprintf("u.is_active::text = $%d", argPos))
 			args = append(args, strings.ToLower(value))
 			argPos++
+		case "role":
+			baseWhere = append(baseWhere, fmt.Sprintf(`EXISTS (
+				SELECT 1 FROM user_roles ur
+				JOIN roles ro ON ro.id = ur.role_id
+				WHERE ur.user_id = u.id AND ur.active = TRUE AND ro.code = $%d
+			)`, argPos))
+			args = append(args, strings.ToUpper(value))
+			argPos++
 		}
 	}
 

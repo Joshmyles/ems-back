@@ -432,10 +432,11 @@ SET attendant_name     = $2,
     dispensed_at       = COALESCE($5, now()),
     dispense_confirmed = $6,
     confirmed_at       = CASE WHEN $6 THEN now() ELSE NULL END,
+    odometer_km        = COALESCE($7, odometer_km),
     updated_at         = now()
 WHERE public_token = $1 AND dispense_confirmed = FALSE`
 
-	tag, err := r.db.Exec(ctx, q, token, req.AttendantName, req.AttendantPhone, req.Notes, req.DispensedAt, req.Approved)
+	tag, err := r.db.Exec(ctx, q, token, req.AttendantName, req.AttendantPhone, req.Notes, req.DispensedAt, req.Approved, req.OdometerKM)
 	if err != nil {
 		return 0, err
 	}

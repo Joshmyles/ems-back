@@ -265,6 +265,31 @@ func (h *Handler) Delete(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// GetTriage godoc
+//
+//	@Summary		Get incident triage information
+//	@Description	Returns the latest triage session (questions and answers) for an incident; data is null when no triage has been recorded.
+//	@Tags			Incidents
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Incident ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/incidents/{id}/triage [get]
+func (h *Handler) GetTriage(c *gin.Context) {
+	id := c.Param("id")
+	info, found, err := h.service.GetIncidentTriage(c.Request.Context(), id)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !found {
+		httpx.OK(c, nil)
+		return
+	}
+	httpx.OK(c, info)
+}
+
 // GetByID godoc
 //
 //	@Summary		Get incident by ID

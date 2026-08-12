@@ -238,7 +238,7 @@ func (h *Handler) ConfirmPublic(c *gin.Context) {
 	token := c.Param("token")
 	var req fuelapp.ConfirmFuelDispenseRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"message": "attendant name is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"message": "attendant name and odometer reading are required"})
 		return
 	}
 

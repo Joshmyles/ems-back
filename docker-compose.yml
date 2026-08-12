@@ -90,7 +90,7 @@ services:
     container_name: ems-back
     restart: unless-stopped
     ports:
-      - '3005:8080'
+      - '3009:8080'
     environment:
       APP_ENV: production
       APP_PORT: 8080
@@ -106,6 +106,30 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+
+  worker:
+    image: joshmyles/ems-back:latest
+    container_name: ems-worker
+    restart: unless-stopped
+    entrypoint: ['./worker']
+    environment:
+      APP_ENV: production
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: ems_db
+      REDIS_ADDR: redis:6379
+      KAFKA_BROKERS: kafka:9092
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      FIREBASE_CREDENTIALS_FILE: /app/secrets/firebase-service-account.json
+    volumes:
+      - ./secrets:/app/secrets:ro
+    depends_on:
+      postgres:
         condition: service_healthy
       kafka:
         condition: service_healthy

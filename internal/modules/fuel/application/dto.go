@@ -28,7 +28,10 @@ type UpdateFuelLogRequest struct {
 // ConfirmFuelDispenseRequest is submitted from the public QR page by the
 // person at the fuel station who actually dispensed the fuel.
 type ConfirmFuelDispenseRequest struct {
-	AttendantName  string     `json:"attendant_name" binding:"required"`
+	AttendantName string `json:"attendant_name" binding:"required"`
+	// Mandatory at confirmation: the attendant records the actual odometer
+	// reading at the pump even though it is optional when the log is created.
+	OdometerKM     *int       `json:"odometer_km" binding:"required,min=0"`
 	AttendantPhone *string    `json:"attendant_phone,omitempty"`
 	DispensedAt    *time.Time `json:"dispensed_at,omitempty"`
 	Notes          *string    `json:"notes,omitempty"`

@@ -16,6 +16,8 @@ type Repository interface {
 	// lookup is constrained so a driver cannot read ambulances they are not on.
 	GetByID(ctx context.Context, id string, driverUserID *string) (domain.Ambulance, error)
 	Create(ctx context.Context, in domain.Ambulance) (domain.Ambulance, error)
+	// NextAmbulanceCode returns the next sequential fleet code (e.g. AMB-0007).
+	NextAmbulanceCode(ctx context.Context) (string, error)
 	Update(ctx context.Context, id string, req UpdateAmbulanceRequest) (domain.Ambulance, error)
 	Delete(ctx context.Context, id string) error
 	AssignDriver(ctx context.Context, ambulanceID, driverUserID string) error

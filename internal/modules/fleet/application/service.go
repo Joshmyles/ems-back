@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"strings"
 
 	"dispatch/internal/modules/fleet/domain"
 	platformdb "dispatch/internal/platform/db"
@@ -38,8 +39,16 @@ func (s *Service) GetAmbulance(ctx context.Context, id string, driverUserID *str
 }
 
 func (s *Service) CreateAmbulance(ctx context.Context, req CreateAmbulanceRequest) (domain.Ambulance, error) {
+	code := req.Code
+	if code == nil || strings.TrimSpace(*code) == "" {
+		generated, err := s.repo.NextAmbulanceCode(ctx)
+		if err != nil {
+			return domain.Ambulance{}, err
+		}
+		code = &generated
+	}
 	a := domain.Ambulance{
-		Code:              req.Code,
+		Code:              code,
 		PlateNumber:       req.PlateNumber,
 		VIN:               req.VIN,
 		Make:              req.Make,

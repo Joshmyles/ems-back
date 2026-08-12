@@ -25,6 +25,7 @@ type CreateIncidentRequest struct {
 	Pulse                   string                `json:"pulse"`
 	BP                      string                `json:"bp"`
 	Temperature             string                `json:"temperature"`
+	CasualtyCount           *int                  `json:"casualty_count" binding:"omitempty,min=1"`
 	IncidentTypeID          string                `json:"incident_type_id" binding:"omitempty,uuid"`
 	SeverityLevelID         *string               `json:"severity_level_id"`
 	PriorityLevelID         *string               `json:"priority_level_id"`

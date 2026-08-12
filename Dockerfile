@@ -19,6 +19,7 @@ COPY . .
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/server ./cmd/server
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/migrate ./cmd/migrate
 RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/seed ./cmd/seed
+RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-w -s" -o /app/worker ./cmd/worker
 
 # Runtime stage
 FROM alpine:3.21
@@ -31,10 +32,11 @@ WORKDIR /app
 COPY --from=builder /app/server .
 COPY --from=builder /app/migrate .
 COPY --from=builder /app/seed .
+COPY --from=builder /app/worker .
 COPY --from=builder /app/migrations ./migrations
 
 # Ensure binaries are executable
-RUN chmod +x server migrate seed
+RUN chmod +x server migrate seed worker
 
 # Run as non-root user
 RUN adduser -D -g '' appuser
