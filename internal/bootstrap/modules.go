@@ -33,14 +33,9 @@ func RegisterModules(deps types.ModuleDeps) {
 	secured := deps.Router.Group("")
 	secured.Use(authmiddleware.AuthMiddleware(deps.Config.JWT.Secret), rbacmiddleware.ScopeContextMiddleware())
 
-	securedDeps := types.ModuleDeps{
-		Router: secured,
-		DB:     deps.DB,
-		Redis:  deps.Redis,
-		Logger: deps.Logger,
-		Bus:    deps.Bus,
-		Config: deps.Config,
-	}
+	// Copy every dependency (incl. PushSender) — only the router changes.
+	securedDeps := deps
+	securedDeps.Router = secured
 
 	rbacmod.RegisterRoutes(securedDeps, rbacSvc)
 	usermod.Register(securedDeps, rbacSvc)
