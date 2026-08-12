@@ -73,3 +73,50 @@ type Summary struct {
 	ByType        []Breakdown    `json:"by_type"`
 	ByDistrict    []DistrictRow  `json:"by_district"`
 }
+
+// FuelBucket is one labelled slice of fuel consumption (e.g. one ambulance).
+type FuelBucket struct {
+	Key    string  `json:"key"`
+	Label  string  `json:"label"`
+	Liters float64 `json:"liters"`
+	Cost   float64 `json:"cost"`
+	Logs   int64   `json:"logs"`
+}
+
+// FuelMonthly is fuel consumption aggregated per calendar month (YYYY-MM).
+type FuelMonthly struct {
+	Month  string  `json:"month"`
+	Liters float64 `json:"liters"`
+	Cost   float64 `json:"cost"`
+	Logs   int64   `json:"logs"`
+}
+
+// FuelFundingSourceReport shows a funder how their allocation is being spent.
+type FuelFundingSourceReport struct {
+	ID               string        `json:"id"`
+	OrganisationName string        `json:"organisation_name"`
+	FundingDate      time.Time     `json:"funding_date"`
+	Amount           float64       `json:"amount"`
+	Spent            float64       `json:"spent"`
+	Remaining        float64       `json:"remaining"`
+	ByAmbulance      []FuelBucket  `json:"by_ambulance"`
+	Monthly          []FuelMonthly `json:"monthly"`
+}
+
+// FuelTotals holds fleet-wide fuel counters for the reporting window.
+type FuelTotals struct {
+	Logs         int64   `json:"logs"`
+	Liters       float64 `json:"liters"`
+	Cost         float64 `json:"cost"`
+	FundedCost   float64 `json:"funded_cost"`
+	UnfundedCost float64 `json:"unfunded_cost"`
+}
+
+// FuelAnalytics is the consolidated fuel consumption report.
+type FuelAnalytics struct {
+	GeneratedAt    time.Time                 `json:"generated_at"`
+	Totals         FuelTotals                `json:"totals"`
+	ByAmbulance    []FuelBucket              `json:"by_ambulance"`
+	Monthly        []FuelMonthly             `json:"monthly"`
+	FundingSources []FuelFundingSourceReport `json:"funding_sources"`
+}

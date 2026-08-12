@@ -117,5 +117,5 @@ jobs:
             docker image prune -f
 
             echo "Deployment completed successfully!"
-            echo "Application is running on port 3005"
+            echo "Application is running on port 3009"
             echo "Default admin: username=admin, password=admin123"

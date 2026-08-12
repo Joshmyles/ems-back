@@ -58,3 +58,8 @@ func (s *Service) GetSummary(ctx context.Context, q SummaryQuery) (analyticsdoma
 
 	return out, nil
 }
+
+// GetFuelAnalytics returns the consolidated fuel consumption report.
+func (s *Service) GetFuelAnalytics(ctx context.Context) (analyticsdomain.FuelAnalytics, error) {
+	return s.repo.GetFuelAnalytics(ctx)
+}

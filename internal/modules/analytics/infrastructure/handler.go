@@ -40,3 +40,21 @@ func (h *Handler) GetSummary(c *gin.Context) {
 	}
 	httpx.OK(c, out)
 }
+
+// GetFuelAnalytics godoc
+// @Summary Fuel consumption analytics
+// @Description Fleet-wide fuel consumption plus per-funding-source spend so funders can see how their fuel allocation was used.
+// @Tags Analytics
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {object} map[string]interface{}
+// @Failure 500 {object} map[string]interface{}
+// @Router /analytics/fuel [get]
+func (h *Handler) GetFuelAnalytics(c *gin.Context) {
+	out, err := h.service.GetFuelAnalytics(c.Request.Context())
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}

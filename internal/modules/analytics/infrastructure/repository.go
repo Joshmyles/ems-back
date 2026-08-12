@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -336,4 +337,156 @@ func humanizeCode(code string) string {
 		parts[i] = strings.ToUpper(p[:1]) + strings.ToLower(p[1:])
 	}
 	return strings.Join(parts, " ")
+}
+
+// GetFuelAnalytics aggregates fuel consumption fleet-wide and per funding
+// source so funders can see how their allocation was spent.
+func (r *Repository) GetFuelAnalytics(ctx context.Context) (analyticsdomain.FuelAnalytics, error) {
+	out := analyticsdomain.FuelAnalytics{
+		GeneratedAt:    time.Now().UTC(),
+		ByAmbulance:    []analyticsdomain.FuelBucket{},
+		Monthly:        []analyticsdomain.FuelMonthly{},
+		FundingSources: []analyticsdomain.FuelFundingSourceReport{},
+	}
+
+	// Fleet-wide totals, split funded vs unfunded.
+	if err := r.db.QueryRow(ctx, `
+		SELECT COUNT(1),
+			COALESCE(SUM(liters), 0),
+			COALESCE(SUM(cost), 0),
+			COALESCE(SUM(cost) FILTER (WHERE funding_source_id IS NOT NULL), 0),
+			COALESCE(SUM(cost) FILTER (WHERE funding_source_id IS NULL), 0)
+		FROM fuel_logs
+	`).Scan(&out.Totals.Logs, &out.Totals.Liters, &out.Totals.Cost, &out.Totals.FundedCost, &out.Totals.UnfundedCost); err != nil {
+		return out, err
+	}
+
+	// Fleet-wide consumption per ambulance.
+	ambRows, err := r.db.Query(ctx, `
+		SELECT fl.ambulance_id, COALESCE(a.plate_number, a.code, fl.ambulance_id::text),
+			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
+		FROM fuel_logs fl
+		LEFT JOIN ambulances a ON a.id = fl.ambulance_id
+		GROUP BY fl.ambulance_id, a.plate_number, a.code
+		ORDER BY SUM(fl.cost) DESC NULLS LAST
+	`)
+	if err != nil {
+		return out, err
+	}
+	defer ambRows.Close()
+	for ambRows.Next() {
+		var b analyticsdomain.FuelBucket
+		if err := ambRows.Scan(&b.Key, &b.Label, &b.Liters, &b.Cost, &b.Logs); err != nil {
+			return out, err
+		}
+		out.ByAmbulance = append(out.ByAmbulance, b)
+	}
+	if err := ambRows.Err(); err != nil {
+		return out, err
+	}
+
+	// Fleet-wide monthly trend (last 12 months).
+	monthRows, err := r.db.Query(ctx, `
+		SELECT to_char(date_trunc('month', filled_at), 'YYYY-MM'),
+			COALESCE(SUM(liters), 0), COALESCE(SUM(cost), 0), COUNT(1)
+		FROM fuel_logs
+		WHERE filled_at >= date_trunc('month', now()) - INTERVAL '11 months'
+		GROUP BY 1
+		ORDER BY 1
+	`)
+	if err != nil {
+		return out, err
+	}
+	defer monthRows.Close()
+	for monthRows.Next() {
+		var m analyticsdomain.FuelMonthly
+		if err := monthRows.Scan(&m.Month, &m.Liters, &m.Cost, &m.Logs); err != nil {
+			return out, err
+		}
+		out.Monthly = append(out.Monthly, m)
+	}
+	if err := monthRows.Err(); err != nil {
+		return out, err
+	}
+
+	// Funding sources with their balances.
+	srcRows, err := r.db.Query(ctx, `
+		SELECT s.id, s.organisation_name, s.funding_date, s.amount,
+			COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id), 0)
+		FROM fuel_funding_sources s
+		ORDER BY s.funding_date DESC, s.created_at DESC
+	`)
+	if err != nil {
+		return out, err
+	}
+	defer srcRows.Close()
+	byID := map[string]*analyticsdomain.FuelFundingSourceReport{}
+	for srcRows.Next() {
+		var fs analyticsdomain.FuelFundingSourceReport
+		if err := srcRows.Scan(&fs.ID, &fs.OrganisationName, &fs.FundingDate, &fs.Amount, &fs.Spent); err != nil {
+			return out, err
+		}
+		fs.Remaining = fs.Amount - fs.Spent
+		fs.ByAmbulance = []analyticsdomain.FuelBucket{}
+		fs.Monthly = []analyticsdomain.FuelMonthly{}
+		out.FundingSources = append(out.FundingSources, fs)
+		byID[fs.ID] = &out.FundingSources[len(out.FundingSources)-1]
+	}
+	if err := srcRows.Err(); err != nil {
+		return out, err
+	}
+
+	// Per-source consumption by ambulance.
+	srcAmbRows, err := r.db.Query(ctx, `
+		SELECT fl.funding_source_id, fl.ambulance_id,
+			COALESCE(a.plate_number, a.code, fl.ambulance_id::text),
+			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
+		FROM fuel_logs fl
+		LEFT JOIN ambulances a ON a.id = fl.ambulance_id
+		WHERE fl.funding_source_id IS NOT NULL
+		GROUP BY fl.funding_source_id, fl.ambulance_id, a.plate_number, a.code
+		ORDER BY SUM(fl.cost) DESC NULLS LAST
+	`)
+	if err != nil {
+		return out, err
+	}
+	defer srcAmbRows.Close()
+	for srcAmbRows.Next() {
+		var sourceID string
+		var b analyticsdomain.FuelBucket
+		if err := srcAmbRows.Scan(&sourceID, &b.Key, &b.Label, &b.Liters, &b.Cost, &b.Logs); err != nil {
+			return out, err
+		}
+		if fs, ok := byID[sourceID]; ok {
+			fs.ByAmbulance = append(fs.ByAmbulance, b)
+		}
+	}
+	if err := srcAmbRows.Err(); err != nil {
+		return out, err
+	}
+
+	// Per-source monthly spend.
+	srcMonthRows, err := r.db.Query(ctx, `
+		SELECT fl.funding_source_id, to_char(date_trunc('month', fl.filled_at), 'YYYY-MM'),
+			COALESCE(SUM(fl.liters), 0), COALESCE(SUM(fl.cost), 0), COUNT(1)
+		FROM fuel_logs fl
+		WHERE fl.funding_source_id IS NOT NULL
+		GROUP BY 1, 2
+		ORDER BY 2
+	`)
+	if err != nil {
+		return out, err
+	}
+	defer srcMonthRows.Close()
+	for srcMonthRows.Next() {
+		var sourceID string
+		var m analyticsdomain.FuelMonthly
+		if err := srcMonthRows.Scan(&sourceID, &m.Month, &m.Liters, &m.Cost, &m.Logs); err != nil {
+			return out, err
+		}
+		if fs, ok := byID[sourceID]; ok {
+			fs.Monthly = append(fs.Monthly, m)
+		}
+	}
+	return out, srcMonthRows.Err()
 }
