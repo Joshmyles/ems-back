@@ -13,6 +13,7 @@ type Repository interface {
 	CreateTrip(ctx context.Context, in domain.Trip) (domain.Trip, error)
 	UpdateTrip(ctx context.Context, id string, req UpdateTripRequest) (domain.Trip, error)
 	DeleteTrip(ctx context.Context, id string) error
+	SummarizeTrips(ctx context.Context) (domain.TripSummary, error)
 
 	ListTripEvents(ctx context.Context, tripID string, p platformdb.Pagination) ([]domain.TripEvent, int64, error)
 	CreateTripEvent(ctx context.Context, tripID string, in domain.TripEvent) (domain.TripEvent, error)

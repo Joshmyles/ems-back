@@ -39,7 +39,7 @@ func Register(deps types.ModuleDeps) {
 		deviceService,
 	)
 
-	h := authhttp.NewHandler(service)
+	h := authhttp.NewHandler(service, deps.Audit)
 	group := deps.Router.Group("/auth")
 	authhttp.RegisterRoutes(group, h, middleware.AuthMiddleware(deps.Config.JWT.Secret))
 }

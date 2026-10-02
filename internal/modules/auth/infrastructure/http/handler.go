@@ -11,14 +11,19 @@ import (
 	authapp "dispatch/internal/modules/auth/application"
 	dto "dispatch/internal/modules/auth/application/dto"
 	"dispatch/internal/platform/httpx"
+	"dispatch/internal/shared/types"
 )
 
 type Handler struct {
 	service *authapp.Service
+	audit   types.AuditRecorder
 }
 
-func NewHandler(service *authapp.Service) *Handler {
-	return &Handler{service: service}
+func NewHandler(service *authapp.Service, audit types.AuditRecorder) *Handler {
+	if audit == nil {
+		audit = types.NoopAuditRecorder{}
+	}
+	return &Handler{service: service, audit: audit}
 }
 
 // Login godoc
@@ -41,20 +46,43 @@ func (h *Handler) Login(c *gin.Context) {
 	}
 	deviceID := c.GetString("device_id")
 	deviceName := c.GetString("device_name")
-	out, err := h.service.Login(c.Request.Context(), req, deviceID, deviceName, clientIP(c.ClientIP()), c.Request.UserAgent())
+	ip := clientIP(c.ClientIP())
+	out, err := h.service.Login(c.Request.Context(), req, deviceID, deviceName, ip, c.Request.UserAgent())
 	if err != nil {
+		// Record the failed attempt. The actor is unknown (bad credentials),
+		// so only the attempted username is captured.
+		h.audit.Record(c.Request.Context(), types.AuditEntry{
+			ActorUsername: req.Username,
+			Action:        types.AuditAuthLoginFailed,
+			EntityType:    "auth",
+			Status:        types.AuditStatusFailure,
+			Description:   "Failed login for '" + req.Username + "': " + err.Error(),
+			IPAddress:     ip,
+			UserAgent:     c.Request.UserAgent(),
+		})
 		switch {
 		case errors.Is(err, authapp.ErrInvalidCredentials):
 			httpx.Error(c, http.StatusUnauthorized, "invalid credentials")
 		case errors.Is(err, authapp.ErrInactiveUser):
-			httpx.Error(c, http.StatusForbidden, "user inactive")
-		case errors.Is(err, authapp.ErrLockedUser):
-			httpx.Error(c, http.StatusForbidden, "user locked")
+			httpx.Error(c, http.StatusForbidden, "account is deactivated")
 		default:
 			httpx.Error(c, http.StatusInternalServerError, err.Error())
 		}
 		return
 	}
+	h.audit.Record(c.Request.Context(), types.AuditEntry{
+		ActorUserID:   out.User.ID,
+		ActorUsername: out.User.Username,
+		ActorRoles:    out.User.Roles,
+		Action:        types.AuditAuthLogin,
+		EntityType:    "auth",
+		EntityID:      out.User.ID,
+		Status:        types.AuditStatusSuccess,
+		Description:   "User '" + out.User.Username + "' logged in",
+		IPAddress:     ip,
+		UserAgent:     c.Request.UserAgent(),
+		Metadata:      map[string]any{"device_name": deviceName},
+	})
 	httpx.OK(c, out)
 }
 
@@ -103,7 +131,11 @@ func (h *Handler) Logout(c *gin.Context) {
 	}
 	userID := c.GetString("user_id")
 	var err error
+	action := types.AuditAuthLogout
+	desc := "User logged out"
 	if req.LogoutAll {
+		action = types.AuditAuthLogoutAll
+		desc = "User logged out of all sessions"
 		err = h.service.LogoutAll(c.Request.Context(), userID)
 	} else {
 		err = h.service.Logout(c.Request.Context(), req.RefreshToken)
@@ -112,6 +144,17 @@ func (h *Handler) Logout(c *gin.Context) {
 		httpx.Error(c, http.StatusUnauthorized, err.Error())
 		return
 	}
+	h.audit.Record(c.Request.Context(), types.AuditEntry{
+		ActorUserID:   userID,
+		ActorUsername: c.GetString("username"),
+		Action:        action,
+		EntityType:    "auth",
+		EntityID:      userID,
+		Status:        types.AuditStatusSuccess,
+		Description:   desc,
+		IPAddress:     clientIP(c.ClientIP()),
+		UserAgent:     c.Request.UserAgent(),
+	})
 	httpx.OK(c, gin.H{"message": "logged out"})
 }
 
@@ -132,6 +175,38 @@ func (h *Handler) Sessions(c *gin.Context) {
 		return
 	}
 	httpx.OK(c, items)
+}
+
+// RevokeSession godoc
+//
+//	@Summary		Revoke a session
+//	@Description	Revokes one of the authenticated user's own active sessions by id
+//	@Tags			Auth
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Session ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		401	{object}	map[string]interface{}
+//	@Router			/auth/sessions/{id} [delete]
+func (h *Handler) RevokeSession(c *gin.Context) {
+	userID := c.GetString("user_id")
+	sessionID := c.Param("id")
+	if err := h.service.RevokeSession(c.Request.Context(), userID, sessionID); err != nil {
+		httpx.Error(c, http.StatusUnauthorized, "session not found")
+		return
+	}
+	h.audit.Record(c.Request.Context(), types.AuditEntry{
+		ActorUserID:   userID,
+		ActorUsername: c.GetString("username"),
+		Action:        types.AuditAuthLogout,
+		EntityType:    "auth_session",
+		EntityID:      sessionID,
+		Status:        types.AuditStatusSuccess,
+		Description:   "Revoked a session",
+		IPAddress:     clientIP(c.ClientIP()),
+		UserAgent:     c.Request.UserAgent(),
+	})
+	httpx.OK(c, gin.H{"message": "session revoked"})
 }
 
 func clientIP(raw string) string {

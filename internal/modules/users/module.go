@@ -11,7 +11,7 @@ import (
 func Register(deps types.ModuleDeps, rbacSvc *rbacapp.Service) {
 	repo := infra.NewRepository(deps.DB)
 	service := userapp.NewService(repo, deps.Bus, deps.Logger, deps.Config.Kafka.TopicUserCreated)
-	handler := http.NewHandler(service)
+	handler := http.NewHandler(service, rbacSvc, deps.Audit)
 	group := deps.Router.Group("/users")
 	http.RegisterRoutes(group, handler, rbacSvc)
 }

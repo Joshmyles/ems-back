@@ -26,7 +26,6 @@ type AuthUser struct {
 	PasswordHash string    `json:"-"`
 	Status       string    `json:"status"`
 	IsActive     bool      `json:"is_active"`
-	IsLocked     bool      `json:"is_locked"`
 	Roles        []string  `json:"roles"`
 	LastLoginAt  time.Time `json:"last_login_at"`
 }

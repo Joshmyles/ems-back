@@ -15,7 +15,7 @@ import (
 func Register(secured types.ModuleDeps, public types.ModuleDeps, rbacSvc *rbacapp.Service) {
 	repo := infrastructure.NewRepository(secured.DB)
 	service := fuelapp.NewService(repo, secured.Logger)
-	handler := http.NewHandler(service)
+	handler := http.NewHandler(service, secured.Audit)
 
 	group := secured.Router.Group("/fuel")
 	http.RegisterRoutes(group, handler, rbacSvc)

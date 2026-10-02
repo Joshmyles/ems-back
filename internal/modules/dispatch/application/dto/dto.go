@@ -43,10 +43,13 @@ type UpdateDispatchStatusRequest struct {
 }
 
 type ListAssignmentsParams struct {
-	IncidentID  *string               `json:"incident_id,omitempty"`
-	AmbulanceID *string               `json:"ambulance_id,omitempty"`
-	Status      *string               `json:"status,omitempty"`
-	Pagination  platformdb.Pagination `json:"pagination"`
+	IncidentID  *string `json:"incident_id,omitempty"`
+	AmbulanceID *string `json:"ambulance_id,omitempty"`
+	Status      *string `json:"status,omitempty"`
+	// Active restricts results to assignments still engaged on a case
+	// (not completed, cancelled or declined).
+	Active     bool                  `json:"active,omitempty"`
+	Pagination platformdb.Pagination `json:"pagination"`
 }
 
 type ListRecommendationsParams struct {

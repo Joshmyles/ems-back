@@ -2,6 +2,7 @@ package http
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -172,6 +173,7 @@ func (h *Handler) GetAssignmentByID(c *gin.Context) {
 //	@Param			incident_id		query		string	false	"Incident ID"
 //	@Param			ambulance_id	query		string	false	"Ambulance ID"
 //	@Param			status			query		string	false	"Assignment status"
+//	@Param			active			query		bool	false	"Only assignments still engaged on a case"
 //	@Param			page			query		int		false	"Page number"	default(1)
 //	@Param			page_size		query		int		false	"Page size"		default(20)
 //	@Param			sort_by			query		string	false	"Sort field"	Enums(created_at,status,assigned_at)
@@ -190,7 +192,8 @@ func (h *Handler) ListAssignments(c *gin.Context) {
 	if v := c.Query("status"); v != "" {
 		status = &v
 	}
-	params := dispatchdto.ListAssignmentsParams{IncidentID: incidentID, AmbulanceID: ambulanceID, Status: status,
+	active, _ := strconv.ParseBool(c.Query("active"))
+	params := dispatchdto.ListAssignmentsParams{IncidentID: incidentID, AmbulanceID: ambulanceID, Status: status, Active: active,
 		Pagination: platformdb.ParsePagination(c.Request.URL.Query(), map[string]string{"created_at": "created_at", "status": "status", "assigned_at": "assigned_at"}, map[string]struct{}{}),
 	}
 	out, err := h.service.ListAssignments(c.Request.Context(), params)

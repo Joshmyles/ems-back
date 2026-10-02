@@ -257,85 +257,148 @@ func (r *Repository) CreateAssignment(ctx context.Context, in dispatchdomain.Dis
 	return in, err
 }
 
-func (r *Repository) GetAssignmentByID(ctx context.Context, id string) (dispatchdomain.DispatchAssignmentResponse, error) {
+// activeAssignmentStatuses are the states in which an assignment still has a
+// unit engaged on the case.
+const activeAssignmentStatuses = `'PROPOSED','ASSIGNED','ACCEPTED','DEPARTED','ARRIVED_SCENE','PATIENT_LOADED','ARRIVED_DESTINATION'`
+
+// assignmentSelectSQL is the shared projection for single and list reads.
+// Column order must match scanAssignment.
+const assignmentSelectSQL = `
+	SELECT
+		da.id,
+		da.incident_id,
+		COALESCE(i.incident_number, '') AS incident_number,
+
+		COALESCE(i.status, '') AS incident_status,
+		COALESCE(rit.name, '') AS incident_type,
+		COALESCE(i.summary, '') AS incident_summary,
+		CONCAT_WS(', ',
+			NULLIF(TRIM(i.landmark), ''),
+			NULLIF(TRIM(i.village), ''),
+			NULLIF(TRIM(i.subcounty), ''),
+			NULLIF(TRIM(rd.name), '')
+		) AS incident_location,
+		COALESCE(i.pickup_location, '') AS pickup_location,
+		COALESCE(rff.name, '') AS referring_facility,
+		COALESCE(tdf.name, rcf.name, '') AS destination_facility,
+		COALESCE(rpl.code, '') AS priority_code,
+		COALESCE(rpl.name, '') AS priority_name,
+		rpl.sort_order AS priority_rank,
+		rpl.target_response_minutes AS priority_target_minutes,
+		i.reported_at,
+
+		da.ambulance_id,
+		COALESCE(a.code, '') AS ambulance_code,
+		COALESCE(a.plate_number, '') AS plate_number,
+		COALESCE(rac.name, '') AS ambulance_category,
+		COALESCE(a.make, '') AS ambulance_make,
+		COALESCE(a.model, '') AS ambulance_model,
+
+		da.assigned_by_user_id,
+		COALESCE(
+			TRIM(CONCAT_WS(' ', abu.first_name, abu.last_name, abu.other_name)),
+			''
+		) AS assigned_by_name,
+
+		da.driver_user_id,
+		COALESCE(
+			TRIM(CONCAT_WS(' ', du.first_name, du.last_name, du.other_name)),
+			''
+		) AS driver_name,
+		COALESCE(du.phone, '') AS driver_phone,
+
+		da.lead_medic_user_id,
+		COALESCE(
+			TRIM(CONCAT_WS(' ', lmu.first_name, lmu.last_name, lmu.other_name)),
+			''
+		) AS lead_medic_name,
+		COALESCE(lmu.phone, '') AS lead_medic_phone,
+
+		da.assignment_mode,
+		da.ranking_score,
+		da.eta_minutes,
+		da.status,
+
+		da.assigned_at,
+		da.accepted_at,
+		da.departed_at,
+		da.arrived_scene_at,
+		da.patient_loaded_at,
+		da.arrived_destination_at,
+		da.completed_at,
+		da.cancelled_at,
+
+		COALESCE(da.cancellation_reason, '') AS cancellation_reason,
+		da.created_at,
+		da.updated_at
+	FROM dispatch_assignments da
+	LEFT JOIN incidents i
+		ON i.id = da.incident_id
+	LEFT JOIN ref_incident_types rit
+		ON rit.id = i.incident_type_id
+	LEFT JOIN ref_priority_levels rpl
+		ON rpl.id = i.priority_level_id
+	LEFT JOIN ref_districts rd
+		ON rd.id = i.district_id
+	LEFT JOIN ref_facilities rff
+		ON rff.id = i.referring_facility_id
+	LEFT JOIN ref_facilities rcf
+		ON rcf.id = i.receiving_facility_id
+	LEFT JOIN trips t
+		ON t.dispatch_assignment_id = da.id
+	LEFT JOIN ref_facilities tdf
+		ON tdf.id = t.destination_facility_id
+	LEFT JOIN ambulances a
+		ON a.id = da.ambulance_id
+	LEFT JOIN ref_ambulance_categories rac
+		ON rac.id = a.category_id
+	LEFT JOIN users abu
+		ON abu.id = da.assigned_by_user_id
+	LEFT JOIN users du
+		ON du.id = da.driver_user_id
+	LEFT JOIN users lmu
+		ON lmu.id = da.lead_medic_user_id
+`
+
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanAssignment(row rowScanner) (dispatchdomain.DispatchAssignmentResponse, error) {
 	var out dispatchdomain.DispatchAssignmentResponse
-
-	err := r.db.QueryRow(ctx, `
-		SELECT 
-			da.id,
-			da.incident_id,
-			COALESCE(i.incident_number, '') AS incident_number,
-
-			da.ambulance_id,
-			COALESCE(a.code, '') AS ambulance_code,
-			COALESCE(a.plate_number, '') AS plate_number,
-			COALESCE(rac.name, '') AS ambulance_category,
-
-			da.assigned_by_user_id,
-			COALESCE(
-				TRIM(CONCAT_WS(' ', abu.first_name, abu.last_name, abu.other_name)),
-				''
-			) AS assigned_by_name,
-
-			da.driver_user_id,
-			COALESCE(
-				TRIM(CONCAT_WS(' ', du.first_name, du.last_name, du.other_name)),
-				''
-			) AS driver_name,
-
-			da.lead_medic_user_id,
-			COALESCE(
-				TRIM(CONCAT_WS(' ', lmu.first_name, lmu.last_name, lmu.other_name)),
-				''
-			) AS lead_medic_name,
-
-			da.assignment_mode,
-			da.ranking_score,
-			da.eta_minutes,
-			da.status,
-
-			da.assigned_at,
-			da.accepted_at,
-			da.departed_at,
-			da.arrived_scene_at,
-			da.patient_loaded_at,
-			da.arrived_destination_at,
-			da.completed_at,
-			da.cancelled_at,
-
-			COALESCE(da.cancellation_reason, '') AS cancellation_reason,
-			da.created_at,
-			da.updated_at
-		FROM dispatch_assignments da
-		LEFT JOIN incidents i
-			ON i.id = da.incident_id
-		LEFT JOIN ambulances a
-			ON a.id = da.ambulance_id
-		LEFT JOIN ref_ambulance_categories rac
-			ON rac.id = a.category_id
-		LEFT JOIN users abu
-			ON abu.id = da.assigned_by_user_id
-		LEFT JOIN users du
-			ON du.id = da.driver_user_id
-		LEFT JOIN users lmu
-			ON lmu.id = da.lead_medic_user_id
-		WHERE da.id = $1
-	`, id).Scan(
+	err := row.Scan(
 		&out.ID,
 		&out.IncidentID,
 		&out.IncidentNumber,
+
+		&out.IncidentStatus,
+		&out.IncidentType,
+		&out.IncidentSummary,
+		&out.IncidentLocation,
+		&out.PickupLocation,
+		&out.ReferringFacility,
+		&out.DestinationFacility,
+		&out.PriorityCode,
+		&out.PriorityName,
+		&out.PriorityRank,
+		&out.PriorityTargetMinutes,
+		&out.ReportedAt,
 
 		&out.AmbulanceID,
 		&out.AmbulanceCode,
 		&out.PlateNumber,
 		&out.AmbulanceCategory,
+		&out.AmbulanceMake,
+		&out.AmbulanceModel,
 
 		&out.AssignedByUserID,
 		&out.AssignedByName,
 		&out.DriverUserID,
 		&out.DriverName,
+		&out.DriverPhone,
 		&out.LeadMedicUserID,
 		&out.LeadMedicName,
+		&out.LeadMedicPhone,
 
 		&out.AssignmentMode,
 		&out.RankingScore,
@@ -355,8 +418,11 @@ func (r *Repository) GetAssignmentByID(ctx context.Context, id string) (dispatch
 		&out.CreatedAt,
 		&out.UpdatedAt,
 	)
-
 	return out, err
+}
+
+func (r *Repository) GetAssignmentByID(ctx context.Context, id string) (dispatchdomain.DispatchAssignmentResponse, error) {
+	return scanAssignment(r.db.QueryRow(ctx, assignmentSelectSQL+` WHERE da.id = $1`, id))
 }
 
 func (r *Repository) UpdateAssignmentStatus(ctx context.Context, id, status, cancellationReason string) (dispatchdomain.DispatchAssignmentResponse, error) {
@@ -435,6 +501,10 @@ func (r *Repository) ListAssignments(ctx context.Context, params dto.ListAssignm
 		pos++
 	}
 
+	if params.Active {
+		where = append(where, "da.status IN ("+activeAssignmentStatuses+")")
+	}
+
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
 
 	var total int64
@@ -453,69 +523,11 @@ func (r *Repository) ListAssignments(ctx context.Context, params dto.ListAssignm
 		"assigned_at": "da.assigned_at",
 	})
 
-	q := fmt.Sprintf(`
-		SELECT 
-			da.id,
-			da.incident_id,
-			COALESCE(i.incident_number, '') AS incident_number,
-
-			da.ambulance_id,
-			COALESCE(a.code, '') AS ambulance_code,
-			COALESCE(a.plate_number, '') AS plate_number,
-			COALESCE(rac.name, '') AS ambulance_category,
-
-			da.assigned_by_user_id,
-			COALESCE(
-				TRIM(CONCAT_WS(' ', abu.first_name, abu.last_name, abu.other_name)),
-				''
-			) AS assigned_by_name,
-
-			da.driver_user_id,
-			COALESCE(
-				TRIM(CONCAT_WS(' ', du.first_name, du.last_name, du.other_name)),
-				''
-			) AS driver_name,
-
-			da.lead_medic_user_id,
-			COALESCE(
-				TRIM(CONCAT_WS(' ', lmu.first_name, lmu.last_name, lmu.other_name)),
-				''
-			) AS lead_medic_name,
-
-			da.assignment_mode,
-			da.ranking_score,
-			da.eta_minutes,
-			da.status,
-
-			da.assigned_at,
-			da.accepted_at,
-			da.departed_at,
-			da.arrived_scene_at,
-			da.patient_loaded_at,
-			da.arrived_destination_at,
-			da.completed_at,
-			da.cancelled_at,
-
-			COALESCE(da.cancellation_reason, '') AS cancellation_reason,
-			da.created_at,
-			da.updated_at
-		FROM dispatch_assignments da
-		LEFT JOIN incidents i
-			ON i.id = da.incident_id
-		LEFT JOIN ambulances a
-			ON a.id = da.ambulance_id
-		LEFT JOIN ref_ambulance_categories rac
-			ON rac.id = a.category_id
-		LEFT JOIN users abu
-			ON abu.id = da.assigned_by_user_id
-		LEFT JOIN users du
-			ON du.id = da.driver_user_id
-		LEFT JOIN users lmu
-			ON lmu.id = da.lead_medic_user_id
+	q := fmt.Sprintf(`%s
 		%s
 		%s
 		LIMIT $%d OFFSET $%d
-	`, whereSQL, orderBy, pos, pos+1)
+	`, assignmentSelectSQL, whereSQL, orderBy, pos, pos+1)
 
 	rows, err := r.db.Query(ctx, q, append(args, p.PageSize, p.Offset)...)
 	if err != nil {
@@ -525,42 +537,8 @@ func (r *Repository) ListAssignments(ctx context.Context, params dto.ListAssignm
 
 	items := []dispatchdomain.DispatchAssignmentResponse{}
 	for rows.Next() {
-		var out dispatchdomain.DispatchAssignmentResponse
-		if err := rows.Scan(
-			&out.ID,
-			&out.IncidentID,
-			&out.IncidentNumber,
-
-			&out.AmbulanceID,
-			&out.AmbulanceCode,
-			&out.PlateNumber,
-			&out.AmbulanceCategory,
-
-			&out.AssignedByUserID,
-			&out.AssignedByName,
-			&out.DriverUserID,
-			&out.DriverName,
-			&out.LeadMedicUserID,
-			&out.LeadMedicName,
-
-			&out.AssignmentMode,
-			&out.RankingScore,
-			&out.ETAMinutes,
-			&out.Status,
-
-			&out.AssignedAt,
-			&out.AcceptedAt,
-			&out.DepartedAt,
-			&out.ArrivedSceneAt,
-			&out.PatientLoadedAt,
-			&out.ArrivedDestinationAt,
-			&out.CompletedAt,
-			&out.CancelledAt,
-
-			&out.CancellationReason,
-			&out.CreatedAt,
-			&out.UpdatedAt,
-		); err != nil {
+		out, err := scanAssignment(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		items = append(items, out)

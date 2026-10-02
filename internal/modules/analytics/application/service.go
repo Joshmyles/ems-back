@@ -9,6 +9,8 @@ import (
 
 type Service struct {
 	repo Repository
+	// clock overrides time.Now in tests.
+	clock func() time.Time
 }
 
 func NewService(repo Repository) *Service {

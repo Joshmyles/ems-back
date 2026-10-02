@@ -22,7 +22,7 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 func (r *Repository) GetUserForLogin(ctx context.Context, username string) (authdomain.AuthUser, error) {
 	query := `
 	SELECT u.id, u.username, COALESCE(u.email,''), COALESCE(u.phone,''), u.password_hash,
-	       u.status, u.is_active, u.is_locked, COALESCE(u.last_login_at, now())
+	       u.status, u.is_active, COALESCE(u.last_login_at, now())
 	FROM users u
 	WHERE (u.username = $1 OR u.email = $1 OR u.phone = $1)
 	  AND u.deleted_at IS NULL
@@ -37,7 +37,6 @@ func (r *Repository) GetUserForLogin(ctx context.Context, username string) (auth
 		&user.PasswordHash,
 		&user.Status,
 		&user.IsActive,
-		&user.IsLocked,
 		&user.LastLoginAt,
 	); err != nil {
 		return authdomain.AuthUser{}, err
@@ -108,6 +107,21 @@ func (r *Repository) RevokeSession(ctx context.Context, sessionID string, reason
 	return err
 }
 
+// RevokeOwnSession revokes a single session but only if it belongs to the
+// given user. It returns the session's refresh-token id and expiry so the
+// caller can also blacklist the refresh token in the cache. pgx.ErrNoRows means
+// the session does not exist, is not owned by the user, or is already revoked.
+func (r *Repository) RevokeOwnSession(ctx context.Context, userID, sessionID string) (string, time.Time, error) {
+	var refreshTokenID string
+	var expiresAt time.Time
+	err := r.db.QueryRow(ctx, `
+	UPDATE auth_sessions
+	SET revoked_at = now(), revoke_reason = 'user_revoked'
+	WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL
+	RETURNING refresh_token_id, expires_at`, sessionID, userID).Scan(&refreshTokenID, &expiresAt)
+	return refreshTokenID, expiresAt, err
+}
+
 func (r *Repository) RevokeAllUserSessions(ctx context.Context, userID string, reason string) error {
 	_, err := r.db.Exec(ctx, `
 	UPDATE auth_sessions
@@ -149,11 +163,11 @@ func (r *Repository) UpdateLastLogin(ctx context.Context, userID string, at time
 }
 
 func (r *Repository) IncrementFailedLogin(ctx context.Context, userID string) error {
+	// Accounts are no longer auto-locked; the counter is kept for visibility
+	// only. Access is controlled by the account's active/inactive state.
 	_, err := r.db.Exec(ctx, `
 	UPDATE users
 	SET failed_login_attempts = failed_login_attempts + 1,
-	    is_locked = CASE WHEN failed_login_attempts + 1 >= 5 THEN TRUE ELSE is_locked END,
-	    status = CASE WHEN failed_login_attempts + 1 >= 5 THEN 'LOCKED' ELSE status END,
 	    updated_at = now()
 	WHERE id = $1`, userID)
 	return err

@@ -2,6 +2,7 @@ package infrastructure
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -30,6 +31,86 @@ func (r *Repository) ResolveBloodProductIDByCode(ctx context.Context, code strin
 	var id string
 	err := r.db.QueryRow(ctx, `SELECT id FROM blood_products WHERE UPPER(code)=UPPER($1)`, code).Scan(&id)
 	return id, err
+}
+
+func (r *Repository) ResolveIncidentID(ctx context.Context, ref string) (string, error) {
+	var id string
+	err := r.db.QueryRow(ctx, `
+		SELECT id::text FROM incidents
+		WHERE id::text = LOWER($1) OR UPPER(incident_number) = UPPER($1)
+		LIMIT 1`, strings.TrimSpace(ref)).Scan(&id)
+	return id, err
+}
+
+func (r *Repository) ResolveInventorySiteID(ctx context.Context, ref string) (string, error) {
+	ref = strings.ToLower(strings.TrimSpace(ref))
+	var id string
+	err := platformdb.WithTx(ctx, r.db, func(tx pgx.Tx) error {
+		err := tx.QueryRow(ctx, `SELECT id::text FROM blood_inventory_sites WHERE id::text = $1`, ref).Scan(&id)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		// Serialise get-or-create per facility so concurrent offers don't
+		// create duplicate sites.
+		if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('blood_inventory_site:' || $1))`, ref); err != nil {
+			return err
+		}
+		err = tx.QueryRow(ctx, `
+			SELECT id::text FROM blood_inventory_sites
+			WHERE site_type = 'FACILITY' AND facility_id::text = $1
+			ORDER BY is_active DESC, created_at
+			LIMIT 1`, ref).Scan(&id)
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+		return tx.QueryRow(ctx, `
+			INSERT INTO blood_inventory_sites (
+				site_type, facility_id, name, district_id, contact_phone, latitude, longitude, location
+			)
+			SELECT 'FACILITY', f.id, f.name, f.district_id, f.phone, f.latitude, f.longitude, f.location
+			FROM ref_facilities f
+			WHERE f.id::text = $1
+			RETURNING id::text`, ref).Scan(&id)
+	})
+	return id, err
+}
+
+// requisitionSelect is shared by the single and list reads. The last two
+// columns expose the accepted offer and latest live pickup assignment so
+// clients can drive collect/deliver without remembering IDs locally.
+const requisitionSelect = `
+	SELECT br.id, br.incident_id, br.requesting_facility_id, COALESCE(br.patient_name,''), COALESCE(br.patient_identifier,''),
+	       br.clinical_summary, COALESCE(br.diagnosis,''), COALESCE(br.indication,''), COALESCE(br.parity_summary,''),
+	       br.blood_group_id, bg.code, br.blood_product_id, bp.code, br.units_requested, br.urgency_level, br.status,
+	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at,
+	       COALESCE(rf.name,''), COALESCE(df.name,''), COALESCE(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name, ru.other_name)),''), COALESCE(inc.incident_number,''),
+	       (SELECT bro.id::text FROM blood_requisition_offers bro
+	         WHERE bro.blood_requisition_id = br.id AND bro.status = 'ACCEPTED'
+	         ORDER BY bro.updated_at DESC LIMIT 1),
+	       (SELECT bta.id::text FROM blood_transport_assignments bta
+	         WHERE bta.blood_requisition_id = br.id AND bta.status <> 'CANCELLED'
+	         ORDER BY bta.assigned_at DESC LIMIT 1)
+	FROM blood_requisitions br
+	JOIN blood_groups bg ON bg.id = br.blood_group_id
+	JOIN blood_products bp ON bp.id = br.blood_product_id
+	LEFT JOIN ref_facilities rf ON rf.id = br.requesting_facility_id
+	LEFT JOIN ref_facilities df ON df.id = br.destination_facility_id
+	LEFT JOIN users ru ON ru.id = br.requested_by_user_id
+	LEFT JOIN incidents inc ON inc.id = br.incident_id`
+
+func scanRequisition(row pgx.Row) (blooddomain.BloodRequisition, error) {
+	var out blooddomain.BloodRequisition
+	err := row.Scan(
+		&out.ID, &out.IncidentID, &out.RequestingFacilityID, &out.PatientName, &out.PatientIdentifier,
+		&out.ClinicalSummary, &out.Diagnosis, &out.Indication, &out.ParitySummary,
+		&out.BloodGroupID, &out.BloodGroupCode, &out.BloodProductID, &out.BloodProductCode,
+		&out.UnitsRequested, &out.UrgencyLevel, &out.Status,
+		&out.ReporterPhone, &out.DestinationFacilityID, &out.RequestedByUserID,
+		&out.CreatedAt, &out.UpdatedAt, &out.ExpiresAt,
+		&out.RequestingFacilityName, &out.DestinationFacilityName, &out.RequestedByUserName, &out.IncidentNumber,
+		&out.AcceptedOfferID, &out.PickupAssignmentID,
+	)
+	return out, err
 }
 
 func (r *Repository) CreateRequisition(ctx context.Context, req blooddomain.BloodRequisition) (blooddomain.BloodRequisition, error) {
@@ -63,31 +144,121 @@ func (r *Repository) CreateRequisition(ctx context.Context, req blooddomain.Bloo
 }
 
 func (r *Repository) GetRequisitionByID(ctx context.Context, id string) (blooddomain.BloodRequisition, error) {
-	q := `
-	SELECT br.id, br.incident_id, br.requesting_facility_id, COALESCE(br.patient_name,''), COALESCE(br.patient_identifier,''),
-	       br.clinical_summary, COALESCE(br.diagnosis,''), COALESCE(br.indication,''), COALESCE(br.parity_summary,''),
-	       br.blood_group_id, bg.code, br.blood_product_id, bp.code, br.units_requested, br.urgency_level, br.status,
-	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at,
-	       COALESCE(rf.name,''), COALESCE(df.name,''), COALESCE(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name, ru.other_name)),''), COALESCE(inc.incident_number,'')
-	FROM blood_requisitions br
-	JOIN blood_groups bg ON bg.id = br.blood_group_id
-	JOIN blood_products bp ON bp.id = br.blood_product_id
-	LEFT JOIN ref_facilities rf ON rf.id = br.requesting_facility_id
-	LEFT JOIN ref_facilities df ON df.id = br.destination_facility_id
-	LEFT JOIN users ru ON ru.id = br.requested_by_user_id
-	LEFT JOIN incidents inc ON inc.id = br.incident_id
-	WHERE br.id = $1`
-	var out blooddomain.BloodRequisition
-	err := r.db.QueryRow(ctx, q, id).Scan(
-		&out.ID, &out.IncidentID, &out.RequestingFacilityID, &out.PatientName, &out.PatientIdentifier,
-		&out.ClinicalSummary, &out.Diagnosis, &out.Indication, &out.ParitySummary,
-		&out.BloodGroupID, &out.BloodGroupCode, &out.BloodProductID, &out.BloodProductCode,
-		&out.UnitsRequested, &out.UrgencyLevel, &out.Status,
-		&out.ReporterPhone, &out.DestinationFacilityID, &out.RequestedByUserID,
-		&out.CreatedAt, &out.UpdatedAt, &out.ExpiresAt,
-		&out.RequestingFacilityName, &out.DestinationFacilityName, &out.RequestedByUserName, &out.IncidentNumber,
+	// Compare as text so a malformed id is a clean "not found", not a cast error.
+	return scanRequisition(r.db.QueryRow(ctx, requisitionSelect+` WHERE br.id::text = LOWER($1)`, strings.TrimSpace(id)))
+}
+
+func splitUpper(v string) []string {
+	parts := strings.Split(v, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.ToUpper(strings.TrimSpace(part)); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
+}
+
+// liveRequisitionStatuses still need coordination work.
+var liveRequisitionStatuses = map[string]bool{
+	"OPEN": true, "APPROVED": true, "BROADCASTING": true,
+	"MATCHED": true, "PICKUP_ASSIGNED": true, "COLLECTED": true,
+}
+
+func (r *Repository) SummarizeRequisitions(ctx context.Context) (blooddomain.BloodRequisitionSummary, error) {
+	out := blooddomain.BloodRequisitionSummary{
+		ByStatus:        map[string]int64{},
+		ByUrgency:       map[string]int64{},
+		ByStatusUrgency: map[string]map[string]int64{},
+	}
+	rows, err := r.db.Query(ctx, `
+		SELECT status, urgency_level, COUNT(1), COALESCE(SUM(units_requested), 0)
+		FROM blood_requisitions
+		GROUP BY status, urgency_level`)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status, urgency string
+		var count, units int64
+		if err := rows.Scan(&status, &urgency, &count, &units); err != nil {
+			return out, err
+		}
+		out.Total += count
+		out.ByStatus[status] += count
+		if out.ByStatusUrgency[status] == nil {
+			out.ByStatusUrgency[status] = map[string]int64{}
+		}
+		out.ByStatusUrgency[status][urgency] += count
+		if liveRequisitionStatuses[status] {
+			out.ByUrgency[urgency] += count
+			out.LiveTotal += count
+			out.UnitsPending += units
+			if urgency == "EMERGENCY" {
+				out.LiveEmergency += count
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
+func (r *Repository) GetRequisitionTracking(ctx context.Context, requisitionID string) (blooddomain.BloodRequisitionTracking, error) {
+	out := blooddomain.BloodRequisitionTracking{Events: []blooddomain.BloodRequisitionEvent{}}
+
+	rows, err := r.db.Query(ctx, `
+		SELECT l.id::text, COALESCE(l.previous_status, ''), l.new_status, COALESCE(l.notes, ''),
+		       l.actor_user_id::text, COALESCE(TRIM(CONCAT_WS(' ', u.first_name, u.last_name, u.other_name)), ''),
+		       l.created_at
+		FROM blood_requisition_status_logs l
+		LEFT JOIN users u ON u.id = l.actor_user_id
+		WHERE l.blood_requisition_id::text = LOWER($1)
+		ORDER BY l.created_at ASC`, strings.TrimSpace(requisitionID))
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ev blooddomain.BloodRequisitionEvent
+		if err := rows.Scan(&ev.ID, &ev.PreviousStatus, &ev.NewStatus, &ev.Notes, &ev.ActorUserID, &ev.ActorName, &ev.CreatedAt); err != nil {
+			return out, err
+		}
+		out.Events = append(out.Events, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	var pickup blooddomain.BloodPickupSummary
+	err = r.db.QueryRow(ctx, `
+		SELECT bta.id::text, bta.status, bta.vehicle_type,
+		       COALESCE(a.code, ''), COALESCE(a.plate_number, ''),
+		       COALESCE(TRIM(CONCAT_WS(' ', du.first_name, du.last_name, du.other_name)), ''), COALESCE(du.phone, ''),
+		       COALESCE(bis.name, ''), COALESCE(df.name, ''), COALESCE(bta.notes, ''),
+		       bta.assigned_at, bta.collected_at, bta.delivered_at
+		FROM blood_transport_assignments bta
+		LEFT JOIN ambulances a ON a.id = bta.ambulance_id
+		LEFT JOIN users du ON du.id = bta.assigned_driver_user_id
+		LEFT JOIN blood_inventory_sites bis ON bis.id = bta.pickup_site_id
+		LEFT JOIN ref_facilities df ON df.id = bta.destination_facility_id
+		WHERE bta.blood_requisition_id::text = LOWER($1) AND bta.status <> 'CANCELLED'
+		ORDER BY bta.assigned_at DESC
+		LIMIT 1`, strings.TrimSpace(requisitionID)).Scan(
+		&pickup.ID, &pickup.Status, &pickup.VehicleType,
+		&pickup.AmbulanceCode, &pickup.PlateNumber,
+		&pickup.DriverName, &pickup.DriverPhone,
+		&pickup.PickupSiteName, &pickup.DestinationFacilityName, &pickup.Notes,
+		&pickup.AssignedAt, &pickup.CollectedAt, &pickup.DeliveredAt,
 	)
-	return out, err
+	switch {
+	case err == nil:
+		out.Pickup = &pickup
+	case errors.Is(err, pgx.ErrNoRows):
+	default:
+		return out, err
+	}
+	return out, nil
 }
 
 func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Pagination) ([]blooddomain.BloodRequisition, int64, error) {
@@ -102,19 +273,23 @@ func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Paginati
 	argPos := 1
 	if p.Search != "" {
 		where = append(where, fmt.Sprintf(`(
-			COALESCE(br.patient_name,'') ILIKE $%d OR
-			COALESCE(br.patient_identifier,'') ILIKE $%d OR
-			br.clinical_summary ILIKE $%d OR
-			COALESCE(br.diagnosis,'') ILIKE $%d
-		)`, argPos, argPos, argPos, argPos))
+			COALESCE(br.patient_name,'') ILIKE $%[1]d OR
+			COALESCE(br.patient_identifier,'') ILIKE $%[1]d OR
+			br.clinical_summary ILIKE $%[1]d OR
+			COALESCE(br.diagnosis,'') ILIKE $%[1]d OR
+			bg.code ILIKE $%[1]d OR
+			bp.code ILIKE $%[1]d OR
+			br.status ILIKE $%[1]d
+		)`, argPos))
 		args = append(args, "%"+p.Search+"%")
 		argPos++
 	}
 	for k, v := range p.Filters {
 		switch k {
 		case "status":
-			where = append(where, fmt.Sprintf(`br.status = $%d`, argPos))
-			args = append(args, strings.ToUpper(v))
+			// Accepts a single status or a comma-separated list.
+			where = append(where, fmt.Sprintf(`br.status = ANY($%d)`, argPos))
+			args = append(args, splitUpper(v))
 			argPos++
 		case "urgency_level":
 			where = append(where, fmt.Sprintf(`br.urgency_level = $%d`, argPos))
@@ -136,26 +311,17 @@ func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Paginati
 	}
 	whereSQL := "WHERE " + strings.Join(where, " AND ")
 	var total int64
-	if err := r.db.QueryRow(ctx, `SELECT COUNT(1) FROM blood_requisitions br `+whereSQL, args...).Scan(&total); err != nil {
+	countSQL := `SELECT COUNT(1) FROM blood_requisitions br
+		JOIN blood_groups bg ON bg.id = br.blood_group_id
+		JOIN blood_products bp ON bp.id = br.blood_product_id ` + whereSQL
+	if err := r.db.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
 		return nil, 0, err
 	}
 	orderBy := platformdb.BuildOrderBy(p, allowedSorts)
-	query := fmt.Sprintf(`
-	SELECT br.id, br.incident_id, br.requesting_facility_id, COALESCE(br.patient_name,''), COALESCE(br.patient_identifier,''),
-	       br.clinical_summary, COALESCE(br.diagnosis,''), COALESCE(br.indication,''), COALESCE(br.parity_summary,''),
-	       br.blood_group_id, bg.code, br.blood_product_id, bp.code, br.units_requested, br.urgency_level, br.status,
-	       COALESCE(br.reporter_phone,''), br.destination_facility_id, br.requested_by_user_id, br.created_at, br.updated_at, br.expires_at,
-	       COALESCE(rf.name,''), COALESCE(df.name,''), COALESCE(TRIM(CONCAT_WS(' ', ru.first_name, ru.last_name, ru.other_name)),''), COALESCE(inc.incident_number,'')
-	FROM blood_requisitions br
-	JOIN blood_groups bg ON bg.id = br.blood_group_id
-	JOIN blood_products bp ON bp.id = br.blood_product_id
-	LEFT JOIN ref_facilities rf ON rf.id = br.requesting_facility_id
-	LEFT JOIN ref_facilities df ON df.id = br.destination_facility_id
-	LEFT JOIN users ru ON ru.id = br.requested_by_user_id
-	LEFT JOIN incidents inc ON inc.id = br.incident_id
+	query := fmt.Sprintf(`%s
 	%s
 	%s
-	LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argPos, argPos+1)
+	LIMIT $%d OFFSET $%d`, requisitionSelect, whereSQL, orderBy, argPos, argPos+1)
 	rows, err := r.db.Query(ctx, query, append(args, p.PageSize, p.Offset)...)
 	if err != nil {
 		return nil, 0, err
@@ -163,16 +329,8 @@ func (r *Repository) ListRequisitions(ctx context.Context, p platformdb.Paginati
 	defer rows.Close()
 	items := make([]blooddomain.BloodRequisition, 0)
 	for rows.Next() {
-		var out blooddomain.BloodRequisition
-		if err := rows.Scan(
-			&out.ID, &out.IncidentID, &out.RequestingFacilityID, &out.PatientName, &out.PatientIdentifier,
-			&out.ClinicalSummary, &out.Diagnosis, &out.Indication, &out.ParitySummary,
-			&out.BloodGroupID, &out.BloodGroupCode, &out.BloodProductID, &out.BloodProductCode,
-			&out.UnitsRequested, &out.UrgencyLevel, &out.Status,
-			&out.ReporterPhone, &out.DestinationFacilityID, &out.RequestedByUserID,
-			&out.CreatedAt, &out.UpdatedAt, &out.ExpiresAt,
-			&out.RequestingFacilityName, &out.DestinationFacilityName, &out.RequestedByUserName, &out.IncidentNumber,
-		); err != nil {
+		out, err := scanRequisition(rows)
+		if err != nil {
 			return nil, 0, err
 		}
 		items = append(items, out)
@@ -356,13 +514,25 @@ func (r *Repository) ListOffers(ctx context.Context, requisitionID string, p pla
 
 func (r *Repository) AcceptOffer(ctx context.Context, requisitionID, offerID string) error {
 	return platformdb.WithTx(ctx, r.db, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `UPDATE blood_requisition_offers SET status='DECLINED', updated_at=now() WHERE blood_requisition_id=$1 AND id <> $2 AND status='OFFERED'`, requisitionID, offerID); err != nil {
+		// Accept first so an offer from another requisition is rejected
+		// before any sibling offers are declined.
+		tag, err := tx.Exec(ctx, `UPDATE blood_requisition_offers SET status='ACCEPTED', updated_at=now() WHERE id::text=LOWER($1) AND blood_requisition_id=$2 AND status='OFFERED'`, offerID, requisitionID)
+		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `UPDATE blood_requisition_offers SET status='ACCEPTED', updated_at=now() WHERE id=$1`, offerID); err != nil {
+		if tag.RowsAffected() == 0 {
+			// Distinguish "no such offer" from "offer already accepted/declined".
+			var status string
+			if err := tx.QueryRow(ctx, `SELECT status FROM blood_requisition_offers WHERE id::text=LOWER($1) AND blood_requisition_id=$2`, offerID, requisitionID).Scan(&status); err != nil {
+				return err
+			}
+			return bloodapp.ErrOfferNotOpen
+		}
+		// Switching to a newer offer supersedes a previously accepted one.
+		if _, err := tx.Exec(ctx, `UPDATE blood_requisition_offers SET status='DECLINED', updated_at=now() WHERE blood_requisition_id=$1 AND id::text <> LOWER($2) AND status IN ('OFFERED','ACCEPTED')`, requisitionID, offerID); err != nil {
 			return err
 		}
-		_, err := tx.Exec(ctx, `UPDATE blood_requisitions SET status='MATCHED', updated_at=now() WHERE id=$1`, requisitionID)
+		_, err = tx.Exec(ctx, `UPDATE blood_requisitions SET status='MATCHED', updated_at=now() WHERE id=$1`, requisitionID)
 		return err
 	})
 }
@@ -390,14 +560,27 @@ func (r *Repository) CreateTransportAssignment(ctx context.Context, in blooddoma
 	return in, nil
 }
 
-func (r *Repository) MarkTransportCollected(ctx context.Context, assignmentID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE blood_transport_assignments SET status='COLLECTED', collected_at=now() WHERE id=$1`, assignmentID)
-	return err
+func (r *Repository) MarkTransportCollected(ctx context.Context, assignmentID, requisitionID string) error {
+	return r.updateTransport(ctx, `UPDATE blood_transport_assignments SET status='COLLECTED', collected_at=now()
+		WHERE id::text=LOWER($1) AND blood_requisition_id=$2`, assignmentID, requisitionID)
 }
 
-func (r *Repository) MarkTransportDelivered(ctx context.Context, assignmentID string) error {
-	_, err := r.db.Exec(ctx, `UPDATE blood_transport_assignments SET status='DELIVERED', delivered_at=now() WHERE id=$1`, assignmentID)
-	return err
+func (r *Repository) MarkTransportDelivered(ctx context.Context, assignmentID, requisitionID string) error {
+	return r.updateTransport(ctx, `UPDATE blood_transport_assignments SET status='DELIVERED', delivered_at=now()
+		WHERE id::text=LOWER($1) AND blood_requisition_id=$2`, assignmentID, requisitionID)
+}
+
+// updateTransport runs a status update and reports pgx.ErrNoRows when the
+// assignment does not exist or belongs to a different requisition.
+func (r *Repository) updateTransport(ctx context.Context, q, assignmentID, requisitionID string) error {
+	tag, err := r.db.Exec(ctx, q, strings.TrimSpace(assignmentID), requisitionID)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return pgx.ErrNoRows
+	}
+	return nil
 }
 
 func (r *Repository) CreateStatusLog(ctx context.Context, requisitionID, prevStatus, newStatus string, actorUserID *string, notes string) error {

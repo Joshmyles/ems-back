@@ -16,6 +16,7 @@ type Repository interface {
 	GetSessionByRefreshTokenID(ctx context.Context, refreshTokenID string) (authdomain.UserSession, error)
 	TouchSession(ctx context.Context, sessionID string, at time.Time, newAccessTokenID string) error
 	RevokeSession(ctx context.Context, sessionID string, reason string) error
+	RevokeOwnSession(ctx context.Context, userID, sessionID string) (string, time.Time, error)
 	RevokeAllUserSessions(ctx context.Context, userID string, reason string) error
 	ListActiveSessions(ctx context.Context, userID string) ([]authdomain.UserSession, error)
 	UpdateLastLogin(ctx context.Context, userID string, at time.Time) error

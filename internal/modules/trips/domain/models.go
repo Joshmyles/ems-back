@@ -28,6 +28,38 @@ type Trip struct {
 	AmbulanceCode           string `json:"ambulance_code,omitempty"`
 	AmbulancePlate          string `json:"ambulance_plate,omitempty"`
 	DestinationFacilityName string `json:"destination_facility_name,omitempty"`
+
+	// Context from the linked incident and dispatch assignment.
+	IncidentType           string     `json:"incident_type,omitempty"`
+	IncidentSummary        string     `json:"incident_summary,omitempty"`
+	SceneLocation          string     `json:"scene_location,omitempty"`
+	PlannedDestinationName string     `json:"planned_destination_name,omitempty"`
+	PriorityName           string     `json:"priority_name,omitempty"`
+	PriorityRank           *int       `json:"priority_rank,omitempty"`
+	AmbulanceMake          string     `json:"ambulance_make,omitempty"`
+	AmbulanceModel         string     `json:"ambulance_model,omitempty"`
+	DriverName             string     `json:"driver_name,omitempty"`
+	DriverPhone            string     `json:"driver_phone,omitempty"`
+	LeadMedicName          string     `json:"lead_medic_name,omitempty"`
+	LeadMedicPhone         string     `json:"lead_medic_phone,omitempty"`
+	AssignmentStatus       string     `json:"assignment_status,omitempty"`
+	AssignedAt             *time.Time `json:"assigned_at,omitempty"`
+	DepartedAt             *time.Time `json:"departed_at,omitempty"`
+	ArrivedSceneAt         *time.Time `json:"arrived_scene_at,omitempty"`
+	PatientLoadedAt        *time.Time `json:"patient_loaded_at,omitempty"`
+	ArrivedDestinationAt   *time.Time `json:"arrived_destination_at,omitempty"`
+}
+
+// TripSummary aggregates the whole trip registry for dashboards.
+type TripSummary struct {
+	Total     int64 `json:"total"`
+	Active    int64 `json:"active"`
+	Completed int64 `json:"completed"`
+	Cancelled int64 `json:"cancelled"`
+	// StartedLast24h counts trips whose started_at falls in the last 24 hours.
+	StartedLast24h     int64    `json:"started_last_24h"`
+	DistanceKm         float64  `json:"distance_km"`
+	AvgDurationMinutes *float64 `json:"avg_duration_minutes,omitempty"`
 }
 
 type TripEvent struct {

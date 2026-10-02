@@ -13,6 +13,8 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, rbacSvc *rbacapp.Service) {
 	// updates/deletes is still enforced inside the handler.
 	rg.POST("/requisitions", h.RaiseRequisition)
 	rg.GET("/requisitions", h.ListRequisitions)
+	rg.GET("/requisitions/summary", h.SummarizeRequisitions)
+	rg.GET("/requisitions/:id/tracking", rbacmiddleware.RequirePermission(rbacSvc, "incidents.read"), h.GetRequisitionTracking)
 	rg.PUT("/requisitions/:id", h.UpdateRequisition)
 	rg.DELETE("/requisitions/:id", h.DeleteRequisition)
 	rg.POST("/requisitions/:id/broadcast", rbacmiddleware.RequirePermission(rbacSvc, "dispatch.assign"), h.Broadcast)

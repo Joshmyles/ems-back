@@ -23,7 +23,6 @@ import (
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
 	ErrInactiveUser       = errors.New("user inactive")
-	ErrLockedUser         = errors.New("user locked")
 	ErrInvalidSession     = errors.New("invalid session")
 	ErrExpiredSession     = errors.New("session expired")
 )
@@ -70,9 +69,6 @@ func (s *Service) Login(ctx context.Context, req dto.LoginRequest, deviceID, dev
 	}
 	if !user.IsActive || user.Status != "ACTIVE" {
 		return dto.AuthResponse{}, ErrInactiveUser
-	}
-	if user.IsLocked {
-		return dto.AuthResponse{}, ErrLockedUser
 	}
 	if err := platformauth.CheckPassword(user.PasswordHash, req.Password); err != nil {
 		_ = s.repo.IncrementFailedLogin(ctx, user.ID)
@@ -199,7 +195,7 @@ func (s *Service) Refresh(ctx context.Context, refreshToken string) (dto.AuthRes
 	if err != nil {
 		return dto.AuthResponse{}, ErrInvalidSession
 	}
-	if !user.IsActive || user.IsLocked {
+	if !user.IsActive {
 		return dto.AuthResponse{}, ErrInvalidSession
 	}
 
@@ -283,6 +279,20 @@ func (s *Service) LogoutAll(ctx context.Context, userID string) error {
 
 func (s *Service) Sessions(ctx context.Context, userID string) ([]authdomain.UserSession, error) {
 	return s.repo.ListActiveSessions(ctx, userID)
+}
+
+// RevokeSession revokes one of the user's own sessions by id. It fails with
+// ErrInvalidSession when the session does not exist or is not owned by the user.
+func (s *Service) RevokeSession(ctx context.Context, userID, sessionID string) error {
+	refreshJTI, expiresAt, err := s.repo.RevokeOwnSession(ctx, userID, sessionID)
+	if err != nil {
+		return ErrInvalidSession
+	}
+	if s.redis != nil {
+		_ = s.revokeRefreshToken(ctx, refreshJTI, time.Until(expiresAt))
+		_ = s.redis.Del(ctx, s.sessionCacheKey(refreshJTI)).Err()
+	}
+	return nil
 }
 
 func (s *Service) cacheSession(ctx context.Context, session authdomain.UserSession) error {

@@ -2,6 +2,7 @@ package bootstrap
 
 import (
 	analyticsmod "dispatch/internal/modules/analytics"
+	auditmod "dispatch/internal/modules/audit"
 	authmod "dispatch/internal/modules/auth"
 	availabilitymod "dispatch/internal/modules/availability"
 	bloodmod "dispatch/internal/modules/blood"
@@ -13,6 +14,7 @@ import (
 	fuelmod "dispatch/internal/modules/fuel"
 	incidentmod "dispatch/internal/modules/incidents"
 	notifmod "dispatch/internal/modules/notifications"
+	profilemod "dispatch/internal/modules/profile"
 	rbacmod "dispatch/internal/modules/rbac"
 	refmod "dispatch/internal/modules/reference"
 	respmod "dispatch/internal/modules/responders"
@@ -25,19 +27,30 @@ import (
 )
 
 func RegisterModules(deps types.ModuleDeps) {
+	// Build the audit recorder first and share it with every module via
+	// deps.Audit, so security-relevant actions (incl. login) are recorded.
+	auditRecorder := auditmod.NewRecorder(deps)
+	deps.Audit = auditRecorder
+
 	authmod.Register(deps)
 
 	refmod.Register(deps)
 	rbacSvc := rbacmod.BuildService(deps)
 
 	secured := deps.Router.Group("")
-	secured.Use(authmiddleware.AuthMiddleware(deps.Config.JWT.Secret), rbacmiddleware.ScopeContextMiddleware())
+	secured.Use(
+		authmiddleware.AuthMiddleware(deps.Config.JWT.Secret),
+		rbacmiddleware.ScopeContextMiddleware(),
+		rbacmiddleware.AuditDenials(auditRecorder),
+	)
 
-	// Copy every dependency (incl. PushSender) — only the router changes.
+	// Copy every dependency (incl. PushSender, Audit) — only the router changes.
 	securedDeps := deps
 	securedDeps.Router = secured
 
+	auditmod.RegisterRoutes(securedDeps, auditRecorder, rbacSvc)
 	rbacmod.RegisterRoutes(securedDeps, rbacSvc)
+	profilemod.Register(securedDeps, rbacSvc)
 	usermod.Register(securedDeps, rbacSvc)
 	facilitiesmod.Register(securedDeps, rbacSvc)
 	fleetmod.Register(securedDeps, rbacSvc)
@@ -54,5 +67,5 @@ func RegisterModules(deps types.ModuleDeps) {
 	dispatchmod.Register(securedDeps)
 	devicetokens.Register(securedDeps)
 	dashboard.Register(securedDeps)
-	analyticsmod.Register(securedDeps)
+	analyticsmod.Register(securedDeps, rbacSvc)
 }

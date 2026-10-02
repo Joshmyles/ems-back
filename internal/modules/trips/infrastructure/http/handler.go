@@ -32,6 +32,8 @@ func NewHandler(service *tripsapp.Service) *Handler {
 //	@Param		filter[ambulance_id]	query		string	false	"Filter by ambulance id"
 //	@Param		filter[date_from]		query		string	false	"Filter by started_at from (ISO 8601)"
 //	@Param		filter[date_to]			query		string	false	"Filter by started_at to (ISO 8601)"
+//	@Param		filter[state]			query		string	false	"Derived trip state"	Enums(active,completed,cancelled)
+//	@Param		search					query		string	false	"Search incident, ambulance, destination, crew, outcome or notes"
 //	@Success	200						{object}	map[string]interface{}
 //	@Failure	500						{object}	map[string]interface{}
 //	@Router		/trips [get]
@@ -47,9 +49,28 @@ func (h *Handler) List(c *gin.Context) {
 			"ambulance_id": {},
 			"date_from":    {},
 			"date_to":      {},
+			"state":        {},
 		},
 	)
 	out, err := h.service.List(c.Request.Context(), p)
+	if err != nil {
+		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	httpx.OK(c, out)
+}
+
+// Summary godoc
+//
+//	@Summary	Summarize trips
+//	@Tags		Trips
+//	@Produce	json
+//	@Security	BearerAuth
+//	@Success	200	{object}	map[string]interface{}
+//	@Failure	500	{object}	map[string]interface{}
+//	@Router		/trips/summary [get]
+func (h *Handler) Summary(c *gin.Context) {
+	out, err := h.service.Summary(c.Request.Context())
 	if err != nil {
 		httpx.Error(c, http.StatusInternalServerError, err.Error())
 		return

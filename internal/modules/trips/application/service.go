@@ -28,6 +28,10 @@ func (s *Service) List(ctx context.Context, p platformdb.Pagination) (platformdb
 	return platformdb.PageResult[domain.Trip]{Items: items, Meta: platformdb.NewPageMeta(p, total)}, nil
 }
 
+func (s *Service) Summary(ctx context.Context) (domain.TripSummary, error) {
+	return s.repo.SummarizeTrips(ctx)
+}
+
 func (s *Service) Get(ctx context.Context, id string) (domain.Trip, error) {
 	return s.repo.GetByID(ctx, id)
 }

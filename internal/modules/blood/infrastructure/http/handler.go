@@ -3,8 +3,10 @@ package http
 import (
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	bloodapp "dispatch/internal/modules/blood/application"
 	rbacapp "dispatch/internal/modules/rbac/application"
@@ -34,6 +36,39 @@ func (h *Handler) isPrivileged(c *gin.Context) bool {
 	return err == nil && ok
 }
 
+// writeError maps service and database errors to HTTP statuses so client
+// mistakes surface as 4xx with a readable message instead of a bare 500.
+func writeError(c *gin.Context, err error) {
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.Is(err, bloodapp.ErrInvalidInput):
+		httpx.Error(c, http.StatusBadRequest, err.Error())
+	case errors.Is(err, bloodapp.ErrNotFound):
+		httpx.Error(c, http.StatusNotFound, err.Error())
+	case errors.Is(err, bloodapp.ErrRequisitionForbidden):
+		httpx.Error(c, http.StatusForbidden, err.Error())
+	case errors.Is(err, bloodapp.ErrRequisitionLocked), errors.Is(err, bloodapp.ErrDecisionNotAllowed),
+		errors.Is(err, bloodapp.ErrOfferNotOpen), errors.Is(err, bloodapp.ErrAcceptNotAllowed):
+		httpx.Error(c, http.StatusConflict, err.Error())
+	case errors.As(err, &pgErr) && (pgErr.Code == "22P02" || pgErr.Code == "23514"):
+		// invalid_text_representation (e.g. malformed UUID) / check_violation
+		httpx.Error(c, http.StatusBadRequest, pgErr.Message)
+	default:
+		httpx.DBError(c, err)
+	}
+}
+
+// stampActor fills an optional user-ID field from the auth context when the
+// client left it out or sent "".
+func stampActor(c *gin.Context, field **string) {
+	if *field != nil && strings.TrimSpace(**field) != "" {
+		return
+	}
+	if uid := c.GetString("user_id"); uid != "" {
+		*field = &uid
+	}
+}
+
 // RaiseRequisition godoc
 //
 //	@Summary		Raise blood requisition
@@ -55,14 +90,10 @@ func (h *Handler) RaiseRequisition(c *gin.Context) {
 	}
 	// Stamp the requester from the auth context so "my requests" filtering
 	// works without trusting the client to identify itself.
-	if req.RequestedByUserID == nil {
-		if uid := c.GetString("user_id"); uid != "" {
-			req.RequestedByUserID = &uid
-		}
-	}
+	stampActor(c, &req.RequestedByUserID)
 	out, err := h.service.RaiseRequisition(c.Request.Context(), req)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.Created(c, out)
@@ -77,7 +108,7 @@ func (h *Handler) Broadcast(c *gin.Context) {
 	_ = c.ShouldBindJSON(&payload)
 	out, err := h.service.BroadcastRequisition(c.Request.Context(), id, payload.DestinationLat, payload.DestinationLon)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, out)
@@ -116,9 +147,16 @@ func (h *Handler) ListRequisitions(c *gin.Context) {
 		"date_to":              {},
 		"requested_by_user_id": {},
 	})
+	// Also honour the plain ?status= / ?urgency_level= form documented above.
+	query := c.Request.URL.Query()
+	for _, key := range []string{"status", "urgency_level", "requested_by_user_id"} {
+		if v := strings.TrimSpace(query.Get(key)); v != "" && p.Filters[key] == "" {
+			p.Filters[key] = v
+		}
+	}
 	out, err := h.service.ListRequisitions(c.Request.Context(), p)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, out)
@@ -143,12 +181,53 @@ func (h *Handler) CreateOffer(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	stampActor(c, &req.OfferedByUserID)
 	out, err := h.service.CreateOffer(c.Request.Context(), req)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.Created(c, out)
+}
+
+// SummarizeRequisitions godoc
+//
+//	@Summary		Summarize blood requisitions
+//	@Description	Returns requisition counts by status and urgency across all records
+//	@Tags			Blood
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/blood/requisitions/summary [get]
+func (h *Handler) SummarizeRequisitions(c *gin.Context) {
+	out, err := h.service.SummarizeRequisitions(c.Request.Context())
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.OK(c, out)
+}
+
+// GetRequisitionTracking godoc
+//
+//	@Summary		Track blood requisition
+//	@Description	Returns the status history and live pickup assignment for a requisition
+//	@Tags			Blood
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Blood Requisition ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Failure		404	{object}	map[string]interface{}
+//	@Failure		500	{object}	map[string]interface{}
+//	@Router			/blood/requisitions/{id}/tracking [get]
+func (h *Handler) GetRequisitionTracking(c *gin.Context) {
+	out, err := h.service.GetRequisitionTracking(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		writeError(c, err)
+		return
+	}
+	httpx.OK(c, out)
 }
 
 // ListOffers godoc
@@ -173,7 +252,7 @@ func (h *Handler) ListOffers(c *gin.Context) {
 	})
 	out, err := h.service.ListOffers(c.Request.Context(), requisitionID, p)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, out)
@@ -199,8 +278,9 @@ func (h *Handler) AcceptOffer(c *gin.Context) {
 	offerID := c.Param("offerId")
 	var body dto.AcceptOfferRequest
 	_ = c.ShouldBindJSON(&body)
+	stampActor(c, &body.ActorUserID)
 	if err := h.service.AcceptOffer(c.Request.Context(), requisitionID, offerID, body.ActorUserID); err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, gin.H{"message": "offer accepted"})
@@ -218,16 +298,17 @@ func (h *Handler) AcceptOffer(c *gin.Context) {
 //	@Success		201		{object}	map[string]interface{}
 //	@Failure		400		{object}	map[string]interface{}
 //	@Failure		500		{object}	map[string]interface{}
-//	@Router			/pickup-assignments [post]
+//	@Router			/blood/pickup-assignments [post]
 func (h *Handler) AssignPickup(c *gin.Context) {
 	var req dto.AssignBloodPickupRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		httpx.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	stampActor(c, &req.AssignedByUserID)
 	out, err := h.service.AssignPickup(c.Request.Context(), req)
 	if err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.Created(c, out)
@@ -246,7 +327,7 @@ func (h *Handler) AssignPickup(c *gin.Context) {
 //	@Success		200				{object}	map[string]interface{}
 //	@Failure		400				{object}	map[string]interface{}
 //	@Failure		500				{object}	map[string]interface{}
-//	@Router			/pickup-assignments/{assignmentId}/collect [post]
+//	@Router			/blood/pickup-assignments/{assignmentId}/collect [post]
 func (h *Handler) MarkCollected(c *gin.Context) {
 	assignmentID := c.Param("assignmentId")
 	var body dto.MarkCollectedRequest
@@ -254,8 +335,9 @@ func (h *Handler) MarkCollected(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	stampActor(c, &body.ActorUserID)
 	if err := h.service.MarkCollected(c.Request.Context(), assignmentID, body.BloodRequisitionID, body.ActorUserID); err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, gin.H{"message": "blood marked collected"})
@@ -274,7 +356,7 @@ func (h *Handler) MarkCollected(c *gin.Context) {
 //	@Success		200				{object}	map[string]interface{}
 //	@Failure		400				{object}	map[string]interface{}
 //	@Failure		500				{object}	map[string]interface{}
-//	@Router			/pickup-assignments/{assignmentId}/deliver [post]
+//	@Router			/blood/pickup-assignments/{assignmentId}/deliver [post]
 func (h *Handler) MarkDelivered(c *gin.Context) {
 	assignmentID := c.Param("assignmentId")
 	var body dto.MarkDeliveredRequest
@@ -282,8 +364,9 @@ func (h *Handler) MarkDelivered(c *gin.Context) {
 		httpx.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	stampActor(c, &body.ActorUserID)
 	if err := h.service.MarkDelivered(c.Request.Context(), assignmentID, body.BloodRequisitionID, body.ActorUserID); err != nil {
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, gin.H{"message": "blood marked delivered"})
@@ -315,14 +398,7 @@ func (h *Handler) UpdateRequisition(c *gin.Context) {
 		c.GetString("user_id"), h.isPrivileged(c),
 	)
 	if err != nil {
-		switch {
-		case errors.Is(err, bloodapp.ErrRequisitionForbidden):
-			httpx.Error(c, http.StatusForbidden, err.Error())
-		case errors.Is(err, bloodapp.ErrRequisitionLocked):
-			httpx.Error(c, http.StatusConflict, err.Error())
-		default:
-			httpx.Error(c, http.StatusInternalServerError, err.Error())
-		}
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, out)
@@ -346,14 +422,7 @@ func (h *Handler) DeleteRequisition(c *gin.Context) {
 		c.GetString("user_id"), h.isPrivileged(c),
 	)
 	if err != nil {
-		switch {
-		case errors.Is(err, bloodapp.ErrRequisitionForbidden):
-			httpx.Error(c, http.StatusForbidden, err.Error())
-		case errors.Is(err, bloodapp.ErrRequisitionLocked):
-			httpx.Error(c, http.StatusConflict, err.Error())
-		default:
-			httpx.Error(c, http.StatusInternalServerError, err.Error())
-		}
+		writeError(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -388,11 +457,7 @@ func (h *Handler) DecideRequisition(c *gin.Context) {
 	}
 	out, err := h.service.DecideRequisition(c.Request.Context(), c.Param("id"), payload.Decision, actor, payload.Notes)
 	if err != nil {
-		if errors.Is(err, bloodapp.ErrDecisionNotAllowed) {
-			httpx.Error(c, http.StatusConflict, err.Error())
-			return
-		}
-		httpx.Error(c, http.StatusInternalServerError, err.Error())
+		writeError(c, err)
 		return
 	}
 	httpx.OK(c, out)

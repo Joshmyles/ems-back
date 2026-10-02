@@ -8,6 +8,7 @@ import (
 	fuelapp "dispatch/internal/modules/fuel/application"
 	"dispatch/internal/modules/fuel/domain"
 	platformdb "dispatch/internal/platform/db"
+	"dispatch/internal/shared/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -38,11 +39,36 @@ func driverScopeUserID(c *gin.Context) *string {
 }
 
 type Handler struct {
-	svc *fuelapp.Service
+	svc   *fuelapp.Service
+	audit types.AuditRecorder
 }
 
-func NewHandler(svc *fuelapp.Service) *Handler {
-	return &Handler{svc: svc}
+func NewHandler(svc *fuelapp.Service, audit types.AuditRecorder) *Handler {
+	if audit == nil {
+		audit = types.NoopAuditRecorder{}
+	}
+	return &Handler{svc: svc, audit: audit}
+}
+
+// recordFunding writes a money-movement audit entry for funding source actions.
+func (h *Handler) recordFunding(c *gin.Context, action, sourceID, desc string, after any) {
+	var roles []string
+	if v, ok := c.Get("roles"); ok {
+		roles, _ = v.([]string)
+	}
+	h.audit.Record(c.Request.Context(), types.AuditEntry{
+		ActorUserID:   c.GetString("user_id"),
+		ActorUsername: c.GetString("username"),
+		ActorRoles:    roles,
+		Action:        action,
+		EntityType:    "fuel_funding_source",
+		EntityID:      sourceID,
+		Status:        types.AuditStatusSuccess,
+		Description:   desc,
+		After:         after,
+		IPAddress:     c.ClientIP(),
+		UserAgent:     c.Request.UserAgent(),
+	})
 }
 
 // ListFuelLogs godoc
@@ -242,7 +268,113 @@ func (h *Handler) CreateFundingSource(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
+	h.recordFunding(c, "fuel_funding.create", created.ID,
+		"Created funding source "+created.OrganisationName, created)
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": created})
+}
+
+// GetFundingSource godoc
+//
+//	@Summary		Get a funding source
+//	@Description	Returns a funding source with derived totals and top-up history
+//	@Tags			Fuel
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Funding source ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/fuel/funding-sources/{id} [get]
+func (h *Handler) GetFundingSource(c *gin.Context) {
+	source, err := h.svc.GetFundingSource(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"message": "funding source not found"})
+		return
+	}
+	topups, err := h.svc.ListFundingTopups(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"source": source, "topups": topups}})
+}
+
+// UpdateFundingSource godoc
+//
+//	@Summary		Update a funding source
+//	@Tags			Fuel
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string								true	"Funding source ID"
+//	@Param			payload	body	fuelapp.UpdateFundingSourceRequest	true	"Fields to update"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/fuel/funding-sources/{id} [put]
+func (h *Handler) UpdateFundingSource(c *gin.Context) {
+	var req fuelapp.UpdateFundingSourceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": err.Error()})
+		return
+	}
+	updated, err := h.svc.UpdateFundingSource(c.Request.Context(), c.Param("id"), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	h.recordFunding(c, "fuel_funding.update", updated.ID,
+		"Updated funding source "+updated.OrganisationName, updated)
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": updated})
+}
+
+// TopUpFundingSource godoc
+//
+//	@Summary		Top up a funding source
+//	@Description	Adds money to a funding source as a tracked top-up transaction
+//	@Tags			Fuel
+//	@Accept			json
+//	@Produce		json
+//	@Security		BearerAuth
+//	@Param			id		path	string								true	"Funding source ID"
+//	@Param			payload	body	fuelapp.CreateFundingTopupRequest	true	"Top-up amount"
+//	@Success		201	{object}	map[string]interface{}
+//	@Router			/fuel/funding-sources/{id}/top-up [post]
+func (h *Handler) TopUpFundingSource(c *gin.Context) {
+	var req fuelapp.CreateFundingTopupRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"message": "a positive top-up amount is required"})
+		return
+	}
+	var createdBy *string
+	if uid := c.GetString("user_id"); uid != "" {
+		createdBy = &uid
+	}
+	source, topup, err := h.svc.TopUpFundingSource(c.Request.Context(), c.Param("id"), req, createdBy)
+	if err != nil {
+		if errors.Is(err, fuelapp.ErrFundingSourceNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"message": "funding source not found"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	h.recordFunding(c, "fuel_funding.topup", source.ID,
+		"Topped up "+source.OrganisationName,
+		gin.H{"amount": topup.Amount, "total_funded": source.TotalFunded, "remaining": source.Remaining})
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"source": source, "topup": topup}})
+}
+
+// ListFundingTopups godoc
+//
+//	@Summary		List a funding source's top-ups
+//	@Tags			Fuel
+//	@Security		BearerAuth
+//	@Param			id	path		string	true	"Funding source ID"
+//	@Success		200	{object}	map[string]interface{}
+//	@Router			/fuel/funding-sources/{id}/top-ups [get]
+func (h *Handler) ListFundingTopups(c *gin.Context) {
+	items, err := h.svc.ListFundingTopups(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "data": gin.H{"items": items}})
 }
 
 // DeleteFundingSource godoc
@@ -260,6 +392,7 @@ func (h *Handler) DeleteFundingSource(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"message": err.Error()})
 		return
 	}
+	h.recordFunding(c, "fuel_funding.delete", c.Param("id"), "Deleted funding source", nil)
 	c.Status(http.StatusNoContent)
 }
 

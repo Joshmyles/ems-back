@@ -4,16 +4,28 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 
 	analyticsapp "dispatch/internal/modules/analytics/application"
 	"dispatch/internal/platform/httpx"
+	"dispatch/internal/shared/types"
 )
 
 type Handler struct {
 	service *analyticsapp.Service
+	logger  *zap.Logger
+	audit   types.AuditRecorder
 }
 
-func NewHandler(service *analyticsapp.Service) *Handler { return &Handler{service: service} }
+func NewHandler(service *analyticsapp.Service, logger *zap.Logger, audit types.AuditRecorder) *Handler {
+	if logger == nil {
+		logger = zap.NewNop()
+	}
+	if audit == nil {
+		audit = types.NoopAuditRecorder{}
+	}
+	return &Handler{service: service, logger: logger, audit: audit}
+}
 
 // GetSummary godoc
 // @Summary Consolidated analytics summary

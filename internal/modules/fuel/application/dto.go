@@ -36,6 +36,23 @@ type CreateFundingSourceRequest struct {
 	Notes            *string `json:"notes,omitempty"`
 }
 
+// UpdateFundingSourceRequest edits a funding source's details. All fields are
+// optional; only the supplied ones change. Amount edits the base allocation
+// (use a top-up to add money without rewriting history).
+type UpdateFundingSourceRequest struct {
+	OrganisationName *string  `json:"organisation_name,omitempty"`
+	FundingDate      *string  `json:"funding_date,omitempty" binding:"omitempty,datetime=2006-01-02"`
+	Amount           *float64 `json:"amount,omitempty" binding:"omitempty,gte=0"`
+	Notes            *string  `json:"notes,omitempty"`
+}
+
+// CreateFundingTopupRequest adds money to an existing funding source.
+type CreateFundingTopupRequest struct {
+	Amount    float64 `json:"amount" binding:"required,gt=0"`
+	TopupDate *string `json:"topup_date,omitempty" binding:"omitempty,datetime=2006-01-02"`
+	Notes     *string `json:"notes,omitempty"`
+}
+
 // ConfirmFuelDispenseRequest is submitted from the public QR page by the
 // person at the fuel station who actually dispensed the fuel.
 type ConfirmFuelDispenseRequest struct {

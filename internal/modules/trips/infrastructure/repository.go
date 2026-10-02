@@ -22,47 +22,30 @@ func NewRepository(db *pgxpool.Pool) *Repository {
 
 var _ application.Repository = (*Repository)(nil)
 
-func (r *Repository) ListTrips(ctx context.Context, p platformdb.Pagination) ([]domain.Trip, int64, error) {
-	allowedSorts := map[string]string{
-		"started_at": "t.started_at",
-		"created_at": "t.created_at",
-	}
-	where := []string{"1=1"}
-	args := make([]any, 0)
-	argPos := 1
+// Trip state is derived: outcome is free text, so "cancel"/"complete" in it
+// (or an end time) decide where a trip sits.
+const (
+	tripCancelledSQL = `COALESCE(t.outcome,'') ILIKE '%cancel%'`
+	tripCompletedSQL = `(NOT ` + tripCancelledSQL + ` AND (t.ended_at IS NOT NULL OR COALESCE(t.outcome,'') ILIKE '%complete%'))`
+	tripActiveSQL    = `(NOT ` + tripCancelledSQL + ` AND t.ended_at IS NULL AND COALESCE(t.outcome,'') NOT ILIKE '%complete%')`
+)
 
-	for key, value := range p.Filters {
-		switch key {
-		case "incident_id":
-			where = append(where, fmt.Sprintf("t.incident_id = $%d", argPos))
-			args = append(args, value)
-			argPos++
-		case "ambulance_id":
-			where = append(where, fmt.Sprintf("t.ambulance_id = $%d", argPos))
-			args = append(args, value)
-			argPos++
-		case "date_from":
-			where = append(where, fmt.Sprintf("t.started_at >= $%d", argPos))
-			args = append(args, value)
-			argPos++
-		case "date_to":
-			where = append(where, fmt.Sprintf("t.started_at <= $%d", argPos))
-			args = append(args, value)
-			argPos++
-		}
-	}
+// tripFromSQL joins everything the registry shows next to a trip.
+const tripFromSQL = `
+FROM trips t
+LEFT JOIN incidents i ON i.id = t.incident_id
+LEFT JOIN ref_incident_types rit ON rit.id = i.incident_type_id
+LEFT JOIN ref_priority_levels rpl ON rpl.id = i.priority_level_id
+LEFT JOIN ref_districts rd ON rd.id = i.district_id
+LEFT JOIN ref_facilities rcf ON rcf.id = i.receiving_facility_id
+LEFT JOIN ambulances a ON a.id = t.ambulance_id
+LEFT JOIN ref_facilities df ON df.id = t.destination_facility_id
+LEFT JOIN dispatch_assignments da ON da.id = t.dispatch_assignment_id
+LEFT JOIN users du ON du.id = da.driver_user_id
+LEFT JOIN users lmu ON lmu.id = da.lead_medic_user_id`
 
-	whereSQL := "WHERE " + strings.Join(where, " AND ")
-
-	var total int64
-	countSQL := fmt.Sprintf(`SELECT COUNT(1) FROM trips t %s`, whereSQL)
-	if err := r.db.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
-		return nil, 0, err
-	}
-
-	orderBy := platformdb.BuildOrderBy(p, allowedSorts)
-
-	listSQL := fmt.Sprintf(`
+// tripSelectSQL is shared by list and get. Column order must match scanTrip.
+const tripSelectSQL = `
 SELECT
 	t.id,
 	t.dispatch_assignment_id,
@@ -86,89 +69,39 @@ SELECT
 	COALESCE(i.incident_number,''),
 	COALESCE(a.code,''),
 	COALESCE(a.plate_number,''),
-	COALESCE(df.name,'')
-FROM trips t
-LEFT JOIN incidents i ON i.id = t.incident_id
-LEFT JOIN ambulances a ON a.id = t.ambulance_id
-LEFT JOIN ref_facilities df ON df.id = t.destination_facility_id
-%s
-%s
-LIMIT $%d OFFSET $%d`, whereSQL, orderBy, argPos, argPos+1)
+	COALESCE(df.name,''),
+	COALESCE(rit.name,''),
+	COALESCE(i.summary,''),
+	CONCAT_WS(', ',
+		NULLIF(TRIM(i.landmark),''),
+		NULLIF(TRIM(i.village),''),
+		NULLIF(TRIM(i.subcounty),''),
+		NULLIF(TRIM(rd.name),'')
+	),
+	COALESCE(rcf.name,''),
+	COALESCE(rpl.name,''),
+	rpl.sort_order,
+	COALESCE(a.make,''),
+	COALESCE(a.model,''),
+	COALESCE(TRIM(CONCAT_WS(' ', du.first_name, du.last_name, du.other_name)),''),
+	COALESCE(du.phone,''),
+	COALESCE(TRIM(CONCAT_WS(' ', lmu.first_name, lmu.last_name, lmu.other_name)),''),
+	COALESCE(lmu.phone,''),
+	COALESCE(da.status,''),
+	da.assigned_at,
+	da.departed_at,
+	da.arrived_scene_at,
+	da.patient_loaded_at,
+	da.arrived_destination_at
+` + tripFromSQL
 
-	rows, err := r.db.Query(ctx, listSQL, append(args, p.PageSize, p.Offset)...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-
-	items := make([]domain.Trip, 0)
-	for rows.Next() {
-		var t domain.Trip
-		if err := rows.Scan(
-			&t.ID,
-			&t.DispatchAssignmentID,
-			&t.IncidentID,
-			&t.AmbulanceID,
-			&t.OriginLat,
-			&t.OriginLon,
-			&t.SceneLat,
-			&t.SceneLon,
-			&t.DestinationFacilityID,
-			&t.DestinationLat,
-			&t.DestinationLon,
-			&t.OdometerStart,
-			&t.OdometerEnd,
-			&t.StartedAt,
-			&t.EndedAt,
-			&t.Outcome,
-			&t.Notes,
-			&t.CreatedAt,
-			&t.UpdatedAt,
-			&t.IncidentNumber,
-			&t.AmbulanceCode,
-			&t.AmbulancePlate,
-			&t.DestinationFacilityName,
-		); err != nil {
-			return nil, 0, err
-		}
-		items = append(items, t)
-	}
-	return items, total, rows.Err()
+type rowScanner interface {
+	Scan(dest ...any) error
 }
 
-func (r *Repository) GetByID(ctx context.Context, id string) (domain.Trip, error) {
-	const q = `
-SELECT
-	t.id,
-	t.dispatch_assignment_id,
-	t.incident_id,
-	t.ambulance_id,
-	t.origin_lat,
-	t.origin_lon,
-	t.scene_lat,
-	t.scene_lon,
-	t.destination_facility_id,
-	t.destination_lat,
-	t.destination_lon,
-	t.odometer_start,
-	t.odometer_end,
-	t.started_at,
-	t.ended_at,
-	t.outcome,
-	t.notes,
-	t.created_at,
-	t.updated_at,
-	COALESCE(i.incident_number,''),
-	COALESCE(a.code,''),
-	COALESCE(a.plate_number,''),
-	COALESCE(df.name,'')
-FROM trips t
-LEFT JOIN incidents i ON i.id = t.incident_id
-LEFT JOIN ambulances a ON a.id = t.ambulance_id
-LEFT JOIN ref_facilities df ON df.id = t.destination_facility_id
-WHERE t.id = $1`
+func scanTrip(row rowScanner) (domain.Trip, error) {
 	var t domain.Trip
-	if err := r.db.QueryRow(ctx, q, id).Scan(
+	err := row.Scan(
 		&t.ID,
 		&t.DispatchAssignmentID,
 		&t.IncidentID,
@@ -192,10 +125,134 @@ WHERE t.id = $1`
 		&t.AmbulanceCode,
 		&t.AmbulancePlate,
 		&t.DestinationFacilityName,
-	); err != nil {
-		return domain.Trip{}, err
+		&t.IncidentType,
+		&t.IncidentSummary,
+		&t.SceneLocation,
+		&t.PlannedDestinationName,
+		&t.PriorityName,
+		&t.PriorityRank,
+		&t.AmbulanceMake,
+		&t.AmbulanceModel,
+		&t.DriverName,
+		&t.DriverPhone,
+		&t.LeadMedicName,
+		&t.LeadMedicPhone,
+		&t.AssignmentStatus,
+		&t.AssignedAt,
+		&t.DepartedAt,
+		&t.ArrivedSceneAt,
+		&t.PatientLoadedAt,
+		&t.ArrivedDestinationAt,
+	)
+	return t, err
+}
+
+func (r *Repository) ListTrips(ctx context.Context, p platformdb.Pagination) ([]domain.Trip, int64, error) {
+	allowedSorts := map[string]string{
+		"started_at": "t.started_at",
+		"created_at": "t.created_at",
 	}
-	return t, nil
+	where := []string{"1=1"}
+	args := make([]any, 0)
+	argPos := 1
+
+	if p.Search != "" {
+		where = append(where, fmt.Sprintf(`(
+			COALESCE(i.incident_number,'') ILIKE $%[1]d OR
+			COALESCE(a.code,'') ILIKE $%[1]d OR
+			COALESCE(a.plate_number,'') ILIKE $%[1]d OR
+			COALESCE(df.name,'') ILIKE $%[1]d OR
+			COALESCE(t.outcome,'') ILIKE $%[1]d OR
+			COALESCE(t.notes,'') ILIKE $%[1]d OR
+			CONCAT_WS(' ', du.first_name, du.last_name, lmu.first_name, lmu.last_name) ILIKE $%[1]d
+		)`, argPos))
+		args = append(args, "%"+p.Search+"%")
+		argPos++
+	}
+
+	for key, value := range p.Filters {
+		switch key {
+		case "incident_id":
+			where = append(where, fmt.Sprintf("t.incident_id = $%d", argPos))
+			args = append(args, value)
+			argPos++
+		case "ambulance_id":
+			where = append(where, fmt.Sprintf("t.ambulance_id = $%d", argPos))
+			args = append(args, value)
+			argPos++
+		case "date_from":
+			where = append(where, fmt.Sprintf("t.started_at >= $%d", argPos))
+			args = append(args, value)
+			argPos++
+		case "date_to":
+			where = append(where, fmt.Sprintf("t.started_at <= $%d", argPos))
+			args = append(args, value)
+			argPos++
+		case "state":
+			switch strings.ToLower(value) {
+			case "active":
+				where = append(where, tripActiveSQL)
+			case "completed":
+				where = append(where, tripCompletedSQL)
+			case "cancelled":
+				where = append(where, tripCancelledSQL)
+			}
+		}
+	}
+
+	whereSQL := "WHERE " + strings.Join(where, " AND ")
+
+	var total int64
+	countSQL := `SELECT COUNT(1) ` + tripFromSQL + ` ` + whereSQL
+	if err := r.db.QueryRow(ctx, countSQL, args...).Scan(&total); err != nil {
+		return nil, 0, err
+	}
+
+	orderBy := platformdb.BuildOrderBy(p, allowedSorts)
+	listSQL := fmt.Sprintf(`%s
+%s
+%s
+LIMIT $%d OFFSET $%d`, tripSelectSQL, whereSQL, orderBy, argPos, argPos+1)
+
+	rows, err := r.db.Query(ctx, listSQL, append(args, p.PageSize, p.Offset)...)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.Trip, 0)
+	for rows.Next() {
+		t, err := scanTrip(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		items = append(items, t)
+	}
+	return items, total, rows.Err()
+}
+
+func (r *Repository) GetByID(ctx context.Context, id string) (domain.Trip, error) {
+	return scanTrip(r.db.QueryRow(ctx, tripSelectSQL+` WHERE t.id = $1`, id))
+}
+
+func (r *Repository) SummarizeTrips(ctx context.Context) (domain.TripSummary, error) {
+	var out domain.TripSummary
+	err := r.db.QueryRow(ctx, `
+		SELECT
+			COUNT(1),
+			COUNT(1) FILTER (WHERE `+tripActiveSQL+`),
+			COUNT(1) FILTER (WHERE `+tripCompletedSQL+`),
+			COUNT(1) FILTER (WHERE `+tripCancelledSQL+`),
+			COUNT(1) FILTER (WHERE t.started_at >= now() - interval '24 hours'),
+			COALESCE(SUM(t.odometer_end - t.odometer_start)
+				FILTER (WHERE t.odometer_start IS NOT NULL AND t.odometer_end IS NOT NULL), 0)::float8,
+			(AVG(EXTRACT(EPOCH FROM t.ended_at - t.started_at) / 60)
+				FILTER (WHERE t.started_at IS NOT NULL AND t.ended_at >= t.started_at))::float8
+		FROM trips t`).Scan(
+		&out.Total, &out.Active, &out.Completed, &out.Cancelled,
+		&out.StartedLast24h, &out.DistanceKm, &out.AvgDurationMinutes,
+	)
+	return out, err
 }
 
 func (r *Repository) CreateTrip(ctx context.Context, in domain.Trip) (domain.Trip, error) {

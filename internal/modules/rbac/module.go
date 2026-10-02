@@ -13,7 +13,7 @@ func BuildService(deps types.ModuleDeps) *rbacapp.Service {
 }
 
 func RegisterRoutes(deps types.ModuleDeps, service *rbacapp.Service) {
-	h := http.NewHandler(service)
+	h := http.NewHandler(service, deps.Audit)
 	group := deps.Router.Group("/rbac")
-	http.RegisterRoutes(group, h)
+	http.RegisterRoutes(group, h, service)
 }

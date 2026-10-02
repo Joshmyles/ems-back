@@ -26,7 +26,7 @@ func (f *BroadcastRecipientFinder) FindBroadcastRecipients(ctx context.Context, 
 		FROM blood_requisition_broadcasts brb
 		LEFT JOIN users u ON u.id = brb.recipient_user_id
 		WHERE brb.blood_requisition_id = $1
-	`)
+	`, bloodRequisitionID)
 	if err != nil {
 		return nil, err
 	}
