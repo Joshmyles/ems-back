@@ -105,7 +105,10 @@ services:
       # Notifications deliver in-process now; the app no longer talks to
       # Kafka. The kafka/worker services below stay defined but unused.
       KAFKA_BROKERS: disabled
+      # ${...} values come from the .env beside this file on the server
+      # (/opt/ems-back/.env); the defaults apply when it is missing.
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
       # Firebase key is baked into the image at the config default path
       # (./secrets/firebase-service-account.json); no host mount needed.
     depends_on:
@@ -129,6 +132,7 @@ services:
       REDIS_ADDR: redis:6379
       KAFKA_BROKERS: kafka:9092
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      LOG_LEVEL: ${LOG_LEVEL:-debug}
       FIREBASE_CREDENTIALS_FILE: /app/secrets/firebase-service-account.json
     volumes:
       - ./secrets:/app/secrets:ro
