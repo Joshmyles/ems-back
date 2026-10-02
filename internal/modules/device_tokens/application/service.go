@@ -27,16 +27,28 @@ func (s *Service) Register(ctx context.Context, req RegisterDeviceTokenRequest) 
 		ID:        uuid.NewString(),
 		UserID:    req.UserID,
 		DeviceID:  strings.TrimSpace(req.DeviceID),
-		Platform:  strings.ToUpper(strings.TrimSpace(req.Platform)),
+		Platform:  normalizePlatform(req.Platform),
 		PushToken: strings.TrimSpace(req.PushToken),
 		IsActive:  true,
 	}
 	return s.repo.Register(ctx, in)
 }
 
+// normalizePlatform maps the client value onto the user_device_tokens CHECK
+// constraint (ANDROID, IOS, WEB). Older mobile builds send no platform at
+// login; defaulting to ANDROID keeps their FCM token instead of rejecting it.
+func normalizePlatform(p string) string {
+	switch v := strings.ToUpper(strings.TrimSpace(p)); v {
+	case "ANDROID", "IOS", "WEB":
+		return v
+	default:
+		return "ANDROID"
+	}
+}
+
 func (s *Service) Update(ctx context.Context, id string, req UpdateDeviceTokenRequest) (devicedomain.DeviceToken, error) {
 	if req.Platform != nil {
-		v := strings.ToUpper(strings.TrimSpace(*req.Platform))
+		v := normalizePlatform(*req.Platform)
 		req.Platform = &v
 	}
 	if req.DeviceID != nil {
