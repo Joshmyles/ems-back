@@ -14,7 +14,7 @@ type CreateUserRequest struct {
 	Gender                string  `json:"gender"`
 	Phone                 string  `json:"phone"`
 	Email                 string  `json:"email"`
-	Password              string  `json:"password" binding:"required,min=8"`
+	Password              string  `json:"password" binding:"omitempty,min=8"`
 	PreferredLanguage     string  `json:"preferred_language"`
 	Timezone              string  `json:"timezone"`
 	Cadre                 string  `json:"cadre"`
@@ -36,9 +36,8 @@ type UpdateUserRequest struct {
 	Gender            *string `json:"gender"`
 	Phone             *string `json:"phone"`
 	Email             *string `json:"email"`
-	Status            *string `json:"status" enums:"ACTIVE,INACTIVE,SUSPENDED,LOCKED"`
+	Status            *string `json:"status" enums:"ACTIVE,INACTIVE"`
 	IsActive          *bool   `json:"is_active"`
-	IsLocked          *bool   `json:"is_locked"`
 	PreferredLanguage *string `json:"preferred_language"`
 	Timezone          *string `json:"timezone"`
 }

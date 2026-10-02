@@ -21,8 +21,9 @@ func roundMoney(v float64) float64 {
 
 // Sentinel errors surfaced to the public QR endpoints.
 var (
-	ErrFuelLogNotFound  = errors.New("fuel log not found")
-	ErrAlreadyConfirmed = errors.New("fuel dispense already confirmed")
+	ErrFuelLogNotFound       = errors.New("fuel log not found")
+	ErrAlreadyConfirmed      = errors.New("fuel dispense already confirmed")
+	ErrFundingSourceNotFound = errors.New("funding source not found")
 )
 
 type Service struct {
@@ -47,6 +48,11 @@ func generatePublicToken() (string, error) {
 // to fuel logs for ambulances the user is the active driver of.
 func (s *Service) List(ctx context.Context, p platformdb.Pagination, driverUserID *string) ([]domain.FuelLog, int64, error) {
 	return s.repo.List(ctx, p, driverUserID)
+}
+
+// Summary returns status counts, recent spend and trends for the fuel board.
+func (s *Service) Summary(ctx context.Context, driverUserID *string) (domain.FuelLogSummary, error) {
+	return s.repo.Summarize(ctx, driverUserID)
 }
 
 // Get returns a single fuel log. When driverUserID is non-nil, the lookup is
@@ -137,8 +143,57 @@ func (s *Service) CreateFundingSource(ctx context.Context, req CreateFundingSour
 	return s.repo.CreateFundingSource(ctx, in)
 }
 
+func (s *Service) GetFundingSource(ctx context.Context, id string) (domain.FundingSource, error) {
+	return s.repo.GetFundingSource(ctx, id)
+}
+
+func (s *Service) UpdateFundingSource(ctx context.Context, id string, req UpdateFundingSourceRequest) (domain.FundingSource, error) {
+	if req.Amount != nil {
+		rounded := roundMoney(*req.Amount)
+		req.Amount = &rounded
+	}
+	return s.repo.UpdateFundingSource(ctx, id, req)
+}
+
 func (s *Service) DeleteFundingSource(ctx context.Context, id string) error {
 	return s.repo.DeleteFundingSource(ctx, id)
+}
+
+// TopUpFundingSource adds money to a funding source and returns the updated
+// source (with recomputed totals) together with the recorded top-up.
+func (s *Service) TopUpFundingSource(ctx context.Context, id string, req CreateFundingTopupRequest, createdByUserID *string) (domain.FundingSource, domain.FundingTopup, error) {
+	// Ensure the source exists before recording money against it.
+	if _, err := s.repo.GetFundingSource(ctx, id); err != nil {
+		return domain.FundingSource{}, domain.FundingTopup{}, ErrFundingSourceNotFound
+	}
+
+	in := domain.FundingTopup{
+		FundingSourceID: id,
+		Amount:          roundMoney(req.Amount),
+		Notes:           req.Notes,
+		CreatedBy:       createdByUserID,
+	}
+	if req.TopupDate != nil {
+		d, err := time.Parse("2006-01-02", *req.TopupDate)
+		if err != nil {
+			return domain.FundingSource{}, domain.FundingTopup{}, err
+		}
+		in.TopupDate = d
+	}
+
+	topup, err := s.repo.AddFundingTopup(ctx, in)
+	if err != nil {
+		return domain.FundingSource{}, domain.FundingTopup{}, err
+	}
+	source, err := s.repo.GetFundingSource(ctx, id)
+	if err != nil {
+		return domain.FundingSource{}, domain.FundingTopup{}, err
+	}
+	return source, topup, nil
+}
+
+func (s *Service) ListFundingTopups(ctx context.Context, id string) ([]domain.FundingTopup, error) {
+	return s.repo.ListFundingTopups(ctx, id)
 }
 
 // GetPublic returns the QR-scanned view of a fuel log by its public token.

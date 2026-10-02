@@ -265,7 +265,6 @@ func (r *Repository) ChangePassword(ctx context.Context, userID, newHash string)
 		SET password_hash = $2,
 		    password_changed_at = now(),
 		    failed_login_attempts = 0,
-		    is_locked = FALSE,
 		    updated_at = now()
 		WHERE id = $1 AND deleted_at IS NULL
 	`, userID, newHash)
@@ -276,6 +275,52 @@ func (r *Repository) ChangePassword(ctx context.Context, userID, newHash string)
 		return userapp.ErrUserNotFound
 	}
 	return nil
+}
+
+// SetActive activates or deactivates a user. Deactivating also revokes all of
+// the user's active sessions so they are signed out immediately; activating
+// clears the failed-login counter. status is kept in step with is_active.
+func (r *Repository) SetActive(ctx context.Context, id string, active bool) (domain.User, error) {
+	status := "INACTIVE"
+	if active {
+		status = "ACTIVE"
+	}
+
+	tx, err := r.db.Begin(ctx)
+	if err != nil {
+		return domain.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	ct, err := tx.Exec(ctx, `
+		UPDATE users
+		SET is_active = $2,
+		    status = $3,
+		    failed_login_attempts = CASE WHEN $2 THEN 0 ELSE failed_login_attempts END,
+		    updated_at = now()
+		WHERE id = $1 AND deleted_at IS NULL
+	`, id, active, status)
+	if err != nil {
+		return domain.User{}, err
+	}
+	if ct.RowsAffected() == 0 {
+		return domain.User{}, userapp.ErrUserNotFound
+	}
+
+	if !active {
+		if _, err := tx.Exec(ctx, `
+			UPDATE auth_sessions
+			SET revoked_at = now(), revoke_reason = 'account_deactivated'
+			WHERE user_id = $1 AND revoked_at IS NULL
+		`, id); err != nil {
+			return domain.User{}, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return domain.User{}, err
+	}
+	return r.GetByID(ctx, id)
 }
 
 func (r *Repository) AssignRole(ctx context.Context, userID string, req dto.AssignRoleRequest) error {

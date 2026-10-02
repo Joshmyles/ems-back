@@ -9,6 +9,7 @@ import (
 
 func RegisterRoutes(rg *gin.RouterGroup, h *Handler, rbacSvc *rbacapp.Service) {
 	rg.GET("", rbacmiddleware.RequirePermission(rbacSvc, "trips.read"), h.List)
+	rg.GET("/summary", rbacmiddleware.RequirePermission(rbacSvc, "trips.read"), h.Summary)
 	rg.GET("/:id", rbacmiddleware.RequirePermission(rbacSvc, "trips.read"), h.Get)
 	rg.POST("", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "trips.manage", "DRIVER", "DISPATCHER"), h.Create)
 	rg.PUT("/:id", rbacmiddleware.RequirePermissionOrRole(rbacSvc, "trips.manage", "DRIVER", "DISPATCHER"), h.Update)

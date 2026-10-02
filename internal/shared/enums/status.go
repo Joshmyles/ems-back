@@ -2,7 +2,7 @@ package enums
 
 const (
 	UserStatusActive             = "ACTIVE"
-	UserStatusLocked             = "LOCKED"
+	UserStatusInactive           = "INACTIVE"
 	FleetAvailable               = "AVAILABLE"
 	IncidentNew                  = "NEW"
 	DispatchAssigned             = "ASSIGNED"

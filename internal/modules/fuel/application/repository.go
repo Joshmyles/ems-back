@@ -12,6 +12,8 @@ type Repository interface {
 	// results are restricted to fuel logs whose ambulance currently has that
 	// user as the active driver in ambulance_crew_assignments.
 	List(ctx context.Context, p platformdb.Pagination, driverUserID *string) ([]domain.FuelLog, int64, error)
+	// Summarize aggregates fuel logs, scoped like List when driverUserID is set.
+	Summarize(ctx context.Context, driverUserID *string) (domain.FuelLogSummary, error)
 	// GetByID returns a single fuel log. When driverUserID is non-nil the
 	// lookup is constrained to fuel logs on an ambulance the user is the
 	// active driver of.
@@ -23,8 +25,15 @@ type Repository interface {
 	GetPublicByToken(ctx context.Context, token string) (domain.FuelLogPublicView, error)
 	ConfirmDispense(ctx context.Context, token string, req ConfirmFuelDispenseRequest) (int64, error)
 
-	// Funding sources: spent/remaining are computed from linked fuel logs.
+	// Funding sources: spent/remaining are computed from linked fuel logs and
+	// top-ups.
 	ListFundingSources(ctx context.Context) ([]domain.FundingSource, error)
+	GetFundingSource(ctx context.Context, id string) (domain.FundingSource, error)
 	CreateFundingSource(ctx context.Context, in domain.FundingSource) (domain.FundingSource, error)
+	UpdateFundingSource(ctx context.Context, id string, req UpdateFundingSourceRequest) (domain.FundingSource, error)
 	DeleteFundingSource(ctx context.Context, id string) error
+
+	// Top-ups add money to a funding source over time.
+	AddFundingTopup(ctx context.Context, in domain.FundingTopup) (domain.FundingTopup, error)
+	ListFundingTopups(ctx context.Context, fundingSourceID string) ([]domain.FundingTopup, error)
 }

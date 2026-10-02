@@ -32,17 +32,35 @@ type DispatchAssignmentResponse struct {
 	IncidentID     string `json:"incident_id"`
 	IncidentNumber string `json:"incident_number"`
 
+	// Incident context for the live dispatch board.
+	IncidentStatus        string     `json:"incident_status,omitempty"`
+	IncidentType          string     `json:"incident_type,omitempty"`
+	IncidentSummary       string     `json:"incident_summary,omitempty"`
+	IncidentLocation      string     `json:"incident_location,omitempty"`
+	PickupLocation        string     `json:"pickup_location,omitempty"`
+	ReferringFacility     string     `json:"referring_facility,omitempty"`
+	DestinationFacility   string     `json:"destination_facility,omitempty"`
+	PriorityCode          string     `json:"priority_code,omitempty"`
+	PriorityName          string     `json:"priority_name,omitempty"`
+	PriorityRank          *int       `json:"priority_rank,omitempty"`
+	PriorityTargetMinutes *int       `json:"priority_target_minutes,omitempty"`
+	ReportedAt            *time.Time `json:"reported_at,omitempty"`
+
 	AmbulanceID       *string `json:"ambulance_id,omitempty"`
 	AmbulanceCode     string  `json:"ambulance_code,omitempty"`
 	PlateNumber       string  `json:"plate_number,omitempty"`
 	AmbulanceCategory string  `json:"ambulance_category,omitempty"`
+	AmbulanceMake     string  `json:"ambulance_make,omitempty"`
+	AmbulanceModel    string  `json:"ambulance_model,omitempty"`
 
 	AssignedByUserID *string `json:"assigned_by_user_id,omitempty"`
 	AssignedByName   string  `json:"assigned_by_name,omitempty"`
 	DriverUserID     *string `json:"driver_user_id,omitempty"`
 	DriverName       string  `json:"driver_name,omitempty"`
+	DriverPhone      string  `json:"driver_phone,omitempty"`
 	LeadMedicUserID  *string `json:"lead_medic_user_id,omitempty"`
 	LeadMedicName    string  `json:"lead_medic_name,omitempty"`
+	LeadMedicPhone   string  `json:"lead_medic_phone,omitempty"`
 
 	AssignmentMode string   `json:"assignment_mode"`
 	RankingScore   *float64 `json:"ranking_score,omitempty"`

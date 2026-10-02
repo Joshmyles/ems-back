@@ -46,7 +46,24 @@ const fuelLogColumns = `
 	fl.created_at,
 	fl.updated_at,
 	fl.funding_source_id,
-	(SELECT s.organisation_name FROM fuel_funding_sources s WHERE s.id = fl.funding_source_id)`
+	(SELECT s.organisation_name FROM fuel_funding_sources s WHERE s.id = fl.funding_source_id),
+	(SELECT a.plate_number FROM ambulances a WHERE a.id = fl.ambulance_id),
+	(SELECT NULLIF(TRIM(a.code), '') FROM ambulances a WHERE a.id = fl.ambulance_id),
+	(SELECT NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), '') FROM users u WHERE u.id = fl.filled_by)`
+
+// driverScope restricts fuel logs (aliased fl) to ambulances the user is the
+// active driver of. Without a driver it returns "TRUE" and no args.
+func driverScope(driverUserID *string, pos int) (string, []any) {
+	if driverUserID == nil || *driverUserID == "" {
+		return "TRUE", nil
+	}
+	return fmt.Sprintf(`EXISTS (
+		SELECT 1 FROM ambulance_crew_assignments ca
+		WHERE ca.ambulance_id = fl.ambulance_id
+		  AND ca.driver_user_id = $%d
+		  AND ca.active = TRUE
+	)`, pos), []any{*driverUserID}
+}
 
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -85,6 +102,9 @@ func scanFuelLog(row rowScanner) (domain.FuelLog, error) {
 		&fl.UpdatedAt,
 		&fundingSourceID,
 		&fundingSourceName,
+		&fl.AmbulancePlate,
+		&fl.AmbulanceCode,
+		&fl.FilledByName,
 	); err != nil {
 		return domain.FuelLog{}, err
 	}
@@ -119,23 +139,25 @@ func (r *Repository) List(ctx context.Context, p platformdb.Pagination, driverUs
 	args := make([]any, 0)
 	pos := 1
 
-	if driverUserID != nil && *driverUserID != "" {
-		where = append(where, fmt.Sprintf(`EXISTS (
-			SELECT 1 FROM ambulance_crew_assignments ca
-			WHERE ca.ambulance_id = fl.ambulance_id
-			  AND ca.driver_user_id = $%d
-			  AND ca.active = TRUE
-		)`, pos))
-		args = append(args, *driverUserID)
+	if scope, scopeArgs := driverScope(driverUserID, pos); len(scopeArgs) > 0 {
+		where = append(where, scope)
+		args = append(args, scopeArgs...)
 		pos++
 	}
 
 	if p.Search != "" {
 		where = append(where, fmt.Sprintf(`(
-			COALESCE(fl.fuel_type,'') ILIKE $%d OR
-			COALESCE(fl.station_name,'') ILIKE $%d OR
-			COALESCE(fl.notes,'') ILIKE $%d
-		)`, pos, pos, pos))
+			COALESCE(fl.fuel_type,'') ILIKE $%[1]d OR
+			COALESCE(fl.station_name,'') ILIKE $%[1]d OR
+			COALESCE(fl.notes,'') ILIKE $%[1]d OR
+			COALESCE(fl.attendant_name,'') ILIKE $%[1]d OR
+			EXISTS (
+				SELECT 1 FROM ambulances a_s
+				WHERE a_s.id = fl.ambulance_id
+				  AND (REPLACE(COALESCE(a_s.plate_number,''), ' ', '') ILIKE REPLACE($%[1]d, ' ', '')
+				       OR COALESCE(a_s.code,'') ILIKE $%[1]d)
+			)
+		)`, pos))
 		args = append(args, "%"+p.Search+"%")
 		pos++
 	}
@@ -144,6 +166,21 @@ func (r *Repository) List(ctx context.Context, p platformdb.Pagination, driverUs
 		switch k {
 		case "ambulance_id":
 			where = append(where, fmt.Sprintf("fl.ambulance_id = $%d", pos))
+			args = append(args, v)
+			pos++
+		case "status":
+			switch strings.ToLower(v) {
+			case "pending":
+				where = append(where, "fl.dispense_confirmed = FALSE")
+			case "confirmed":
+				where = append(where, "fl.dispense_confirmed = TRUE")
+			}
+		case "fuel_type":
+			where = append(where, fmt.Sprintf("LOWER(TRIM(COALESCE(fl.fuel_type,''))) = LOWER(TRIM($%d))", pos))
+			args = append(args, v)
+			pos++
+		case "funding_source_id":
+			where = append(where, fmt.Sprintf("fl.funding_source_id::text = LOWER($%d)", pos))
 			args = append(args, v)
 			pos++
 		case "user_id":
@@ -459,14 +496,34 @@ WHERE public_token = $1 AND dispense_confirmed = FALSE`
 
 // ── Funding sources ─────────────────────────────────────────────────────────
 
+// fundingSourceSelect is the shared projection for a funding source with its
+// derived spent / top-up / remaining figures.
+const fundingSourceSelect = `
+	SELECT s.id, s.organisation_name, s.funding_date, s.amount, s.notes,
+		COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id), 0) AS spent,
+		COALESCE((SELECT SUM(t.amount) FROM fuel_funding_topups t WHERE t.funding_source_id = s.id), 0) AS topup_total,
+		COALESCE((SELECT COUNT(*) FROM fuel_funding_topups t WHERE t.funding_source_id = s.id), 0) AS topup_count,
+		s.created_at, s.updated_at
+	FROM fuel_funding_sources s`
+
+func scanFundingSource(row interface {
+	Scan(dest ...any) error
+}) (domain.FundingSource, error) {
+	var fs domain.FundingSource
+	if err := row.Scan(
+		&fs.ID, &fs.OrganisationName, &fs.FundingDate, &fs.Amount, &fs.Notes,
+		&fs.Spent, &fs.TopupTotal, &fs.TopupCount, &fs.CreatedAt, &fs.UpdatedAt,
+	); err != nil {
+		return domain.FundingSource{}, err
+	}
+	fs.TotalFunded = fs.Amount + fs.TopupTotal
+	fs.Remaining = fs.TotalFunded - fs.Spent
+	return fs, nil
+}
+
 func (r *Repository) ListFundingSources(ctx context.Context) ([]domain.FundingSource, error) {
-	rows, err := r.db.Query(ctx, `
-		SELECT s.id, s.organisation_name, s.funding_date, s.amount, s.notes,
-			COALESCE((SELECT SUM(fl.cost) FROM fuel_logs fl WHERE fl.funding_source_id = s.id), 0) AS spent,
-			s.created_at, s.updated_at
-		FROM fuel_funding_sources s
-		ORDER BY s.funding_date DESC, s.created_at DESC
-	`)
+	rows, err := r.db.Query(ctx, fundingSourceSelect+`
+		ORDER BY s.funding_date DESC, s.created_at DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -474,37 +531,125 @@ func (r *Repository) ListFundingSources(ctx context.Context) ([]domain.FundingSo
 
 	items := make([]domain.FundingSource, 0)
 	for rows.Next() {
-		var fs domain.FundingSource
-		if err := rows.Scan(
-			&fs.ID, &fs.OrganisationName, &fs.FundingDate, &fs.Amount, &fs.Notes,
-			&fs.Spent, &fs.CreatedAt, &fs.UpdatedAt,
-		); err != nil {
+		fs, err := scanFundingSource(rows)
+		if err != nil {
 			return nil, err
 		}
-		fs.Remaining = fs.Amount - fs.Spent
 		items = append(items, fs)
 	}
 	return items, rows.Err()
 }
 
+func (r *Repository) GetFundingSource(ctx context.Context, id string) (domain.FundingSource, error) {
+	return scanFundingSource(r.db.QueryRow(ctx, fundingSourceSelect+` WHERE s.id = $1`, id))
+}
+
 func (r *Repository) CreateFundingSource(ctx context.Context, in domain.FundingSource) (domain.FundingSource, error) {
-	err := r.db.QueryRow(ctx, `
+	var id string
+	if err := r.db.QueryRow(ctx, `
 		INSERT INTO fuel_funding_sources (organisation_name, funding_date, amount, notes)
 		VALUES ($1, COALESCE($2, CURRENT_DATE), $3, $4)
-		RETURNING id, organisation_name, funding_date, amount, notes, created_at, updated_at
-	`, in.OrganisationName, nullableTime(in.FundingDate), in.Amount, in.Notes).Scan(
-		&in.ID, &in.OrganisationName, &in.FundingDate, &in.Amount, &in.Notes, &in.CreatedAt, &in.UpdatedAt,
-	)
-	if err != nil {
+		RETURNING id
+	`, in.OrganisationName, nullableTime(in.FundingDate), in.Amount, in.Notes).Scan(&id); err != nil {
 		return domain.FundingSource{}, err
 	}
-	in.Remaining = in.Amount
-	return in, nil
+	return r.GetFundingSource(ctx, id)
+}
+
+func (r *Repository) UpdateFundingSource(ctx context.Context, id string, req fuelapp.UpdateFundingSourceRequest) (domain.FundingSource, error) {
+	sets := make([]string, 0)
+	args := make([]any, 0)
+	pos := 1
+
+	if req.OrganisationName != nil {
+		sets = append(sets, fmt.Sprintf("organisation_name = $%d", pos))
+		args = append(args, *req.OrganisationName)
+		pos++
+	}
+	if req.FundingDate != nil {
+		d, err := time.Parse("2006-01-02", *req.FundingDate)
+		if err != nil {
+			return domain.FundingSource{}, err
+		}
+		sets = append(sets, fmt.Sprintf("funding_date = $%d", pos))
+		args = append(args, d)
+		pos++
+	}
+	if req.Amount != nil {
+		sets = append(sets, fmt.Sprintf("amount = $%d", pos))
+		args = append(args, *req.Amount)
+		pos++
+	}
+	if req.Notes != nil {
+		sets = append(sets, fmt.Sprintf("notes = NULLIF($%d, '')", pos))
+		args = append(args, *req.Notes)
+		pos++
+	}
+
+	if len(sets) == 0 {
+		return r.GetFundingSource(ctx, id)
+	}
+
+	sets = append(sets, "updated_at = now()")
+	args = append(args, id)
+	if _, err := r.db.Exec(ctx, fmt.Sprintf(
+		`UPDATE fuel_funding_sources SET %s WHERE id = $%d`, strings.Join(sets, ", "), pos), args...); err != nil {
+		return domain.FundingSource{}, err
+	}
+	return r.GetFundingSource(ctx, id)
 }
 
 func (r *Repository) DeleteFundingSource(ctx context.Context, id string) error {
 	_, err := r.db.Exec(ctx, `DELETE FROM fuel_funding_sources WHERE id = $1`, id)
 	return err
+}
+
+func (r *Repository) AddFundingTopup(ctx context.Context, in domain.FundingTopup) (domain.FundingTopup, error) {
+	err := r.db.QueryRow(ctx, `
+		INSERT INTO fuel_funding_topups (funding_source_id, amount, topup_date, notes, created_by)
+		VALUES ($1, $2, COALESCE($3, CURRENT_DATE), NULLIF($4, ''), $5)
+		RETURNING id, funding_source_id, amount, topup_date, notes, created_by, created_at
+	`, in.FundingSourceID, in.Amount, nullableTime(in.TopupDate), nullableStr(in.Notes), in.CreatedBy).Scan(
+		&in.ID, &in.FundingSourceID, &in.Amount, &in.TopupDate, &in.Notes, &in.CreatedBy, &in.CreatedAt,
+	)
+	if err != nil {
+		return domain.FundingTopup{}, err
+	}
+	return in, nil
+}
+
+func (r *Repository) ListFundingTopups(ctx context.Context, fundingSourceID string) ([]domain.FundingTopup, error) {
+	rows, err := r.db.Query(ctx, `
+		SELECT t.id, t.funding_source_id, t.amount, t.topup_date, t.notes, t.created_by,
+			(SELECT (u.first_name || ' ' || u.last_name) FROM users u WHERE u.id = t.created_by) AS created_by_name,
+			t.created_at
+		FROM fuel_funding_topups t
+		WHERE t.funding_source_id = $1
+		ORDER BY t.topup_date DESC, t.created_at DESC
+	`, fundingSourceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	items := make([]domain.FundingTopup, 0)
+	for rows.Next() {
+		var t domain.FundingTopup
+		if err := rows.Scan(
+			&t.ID, &t.FundingSourceID, &t.Amount, &t.TopupDate, &t.Notes, &t.CreatedBy, &t.CreatedByName, &t.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, t)
+	}
+	return items, rows.Err()
+}
+
+func nullableStr(s *string) any {
+	if s == nil {
+		return ""
+	}
+	return *s
 }
 
 // nullableTime maps the zero time to NULL so SQL defaults apply.

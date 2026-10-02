@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"dispatch/internal/platform/auth"
@@ -18,12 +19,21 @@ import (
 
 var ErrUserNotFound = errors.New("user not found")
 
+// DefaultTemporaryPassword is assigned to a new user when the creator does not
+// supply a password. The user is expected to change it from their profile.
+const DefaultTemporaryPassword = "123456789"
+
+// ErrForbidden is returned when a caller attempts an admin password reset
+// without the required privilege.
+var ErrForbidden = errors.New("forbidden")
+
 type Repository interface {
 	Create(ctx context.Context, user domain.User, passwordHash string, profile dto.CreateUserRequest) error
 	List(ctx context.Context, params dto.ListUsersParams) ([]domain.User, int64, error)
 	GetByID(ctx context.Context, id string) (domain.User, error)
 	Update(ctx context.Context, id string, req dto.UpdateUserRequest) (domain.User, error)
 	Delete(ctx context.Context, id string) error
+	SetActive(ctx context.Context, id string, active bool) (domain.User, error)
 
 	GetPasswordHash(ctx context.Context, userID string) (string, error)
 	ChangePassword(ctx context.Context, userID, newHash string) error
@@ -56,7 +66,13 @@ func NewService(repo Repository, bus events.Publisher, log *zap.Logger, topic st
 }
 
 func (s *Service) Create(ctx context.Context, req dto.CreateUserRequest) (domain.User, error) {
-	hash, err := auth.HashPassword(req.Password)
+	// Fall back to a shared temporary password when none is supplied, so admins
+	// can create accounts quickly; the user changes it from their profile.
+	password := strings.TrimSpace(req.Password)
+	if password == "" {
+		password = DefaultTemporaryPassword
+	}
+	hash, err := auth.HashPassword(password)
 	if err != nil {
 		return domain.User{}, err
 	}
@@ -114,9 +130,34 @@ func (s *Service) Delete(ctx context.Context, id string) error {
 	return s.repo.Delete(ctx, id)
 }
 
-func (s *Service) ChangePassword(ctx context.Context, userID string, req dto.ChangePasswordRequest) error {
-	if !req.ResetByAdmin {
-		hash, err := s.repo.GetPasswordHash(ctx, userID)
+func (s *Service) Activate(ctx context.Context, id string) (domain.User, error) {
+	return s.repo.SetActive(ctx, id, true)
+}
+
+func (s *Service) Deactivate(ctx context.Context, id string) (domain.User, error) {
+	return s.repo.SetActive(ctx, id, false)
+}
+
+// ChangePassword updates a user's password. Two flows are supported:
+//
+//   - Self-service: the caller changes their own password (targetID == callerID)
+//     and must supply the correct current password. reset_by_admin is ignored.
+//   - Admin reset: the caller resets another user's password, or explicitly sets
+//     reset_by_admin. This requires callerCanAdminReset (the users.update
+//     privilege), checked by the handler; without it the call is forbidden.
+//
+// This split is what closes the privilege-escalation hole where any user could
+// reset anyone's password by setting reset_by_admin.
+func (s *Service) ChangePassword(ctx context.Context, targetID string, req dto.ChangePasswordRequest, callerID string, callerCanAdminReset bool) error {
+	isSelf := targetID == callerID
+	adminReset := req.ResetByAdmin || !isSelf
+
+	if adminReset {
+		if !callerCanAdminReset {
+			return ErrForbidden
+		}
+	} else {
+		hash, err := s.repo.GetPasswordHash(ctx, targetID)
 		if err != nil {
 			return err
 		}
@@ -130,7 +171,7 @@ func (s *Service) ChangePassword(ctx context.Context, userID string, req dto.Cha
 		return err
 	}
 
-	return s.repo.ChangePassword(ctx, userID, newHash)
+	return s.repo.ChangePassword(ctx, targetID, newHash)
 }
 
 func (s *Service) AssignRole(ctx context.Context, userID string, req dto.AssignRoleRequest) error {

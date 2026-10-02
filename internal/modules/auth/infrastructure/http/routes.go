@@ -9,4 +9,5 @@ func RegisterRoutes(rg *gin.RouterGroup, h *Handler, authMiddleware gin.HandlerF
 	secured.Use(authMiddleware)
 	secured.POST("/logout", h.Logout)
 	secured.GET("/sessions", h.Sessions)
+	secured.DELETE("/sessions/:id", h.RevokeSession)
 }

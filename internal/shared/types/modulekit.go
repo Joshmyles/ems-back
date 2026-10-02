@@ -30,4 +30,7 @@ type ModuleDeps struct {
 	// PushSender is nil when Firebase credentials are not configured; the
 	// notifications service then leaves rows PENDING instead of sending.
 	PushSender NotificationSender
+	// Audit records security-relevant actions to the audit trail. Never nil —
+	// bootstrap installs a real recorder, falling back to NoopAuditRecorder.
+	Audit AuditRecorder
 }
