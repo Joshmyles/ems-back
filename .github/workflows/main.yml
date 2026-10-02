@@ -64,6 +64,24 @@ jobs:
           username: ${{ secrets.DOCKER_USERNAME }}
           password: ${{ secrets.DOCKER_PASSWORD }}
 
+      # secrets/ is gitignored, so the Firebase Admin key comes from the
+      # FIREBASE_SERVICE_ACCOUNT repo secret (full JSON of the service account
+      # key). The Dockerfile bakes it in at the default credentials path.
+      - name: Write Firebase service account key
+        env:
+          FIREBASE_SERVICE_ACCOUNT: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+        run: |
+          if [ -z "$FIREBASE_SERVICE_ACCOUNT" ]; then
+            echo "::error::FIREBASE_SERVICE_ACCOUNT secret is not set"
+            exit 1
+          fi
+          mkdir -p secrets
+          printf '%s' "$FIREBASE_SERVICE_ACCOUNT" > secrets/firebase-service-account.json
+          jq -e '.type == "service_account" and (.project_id | length > 0) and (.private_key | length > 0)' \
+            secrets/firebase-service-account.json > /dev/null \
+            || { echo "::error::FIREBASE_SERVICE_ACCOUNT is not a valid Firebase Admin service account JSON"; exit 1; }
+          echo "Firebase key written for project $(jq -r .project_id secrets/firebase-service-account.json)"
+
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
