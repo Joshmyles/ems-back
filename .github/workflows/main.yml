@@ -17,20 +17,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # setup-go caches ~/go/pkg/mod and the build cache (keyed on go.sum);
+      # a second actions/cache on the same paths fails with tar "File exists".
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-
-      - name: Cache Go modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/go/pkg/mod
-            ~/.cache/go-build
-          key: ${{ runner.os }}-go-${{ hashFiles('**/go.sum') }}
-          restore-keys: |
-            ${{ runner.os }}-go-
 
       - name: Download dependencies
         run: go mod download
