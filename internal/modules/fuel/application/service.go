@@ -50,11 +50,6 @@ func (s *Service) List(ctx context.Context, p platformdb.Pagination, driverUserI
 	return s.repo.List(ctx, p, driverUserID)
 }
 
-// Summary returns status counts, recent spend and trends for the fuel board.
-func (s *Service) Summary(ctx context.Context, driverUserID *string) (domain.FuelLogSummary, error) {
-	return s.repo.Summarize(ctx, driverUserID)
-}
-
 // Get returns a single fuel log. When driverUserID is non-nil, the lookup is
 // scoped so a driver cannot read fuel logs for ambulances they are not on.
 func (s *Service) Get(ctx context.Context, id string, driverUserID *string) (domain.FuelLog, error) {
