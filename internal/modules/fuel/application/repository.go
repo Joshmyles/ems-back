@@ -12,8 +12,6 @@ type Repository interface {
 	// results are restricted to fuel logs whose ambulance currently has that
 	// user as the active driver in ambulance_crew_assignments.
 	List(ctx context.Context, p platformdb.Pagination, driverUserID *string) ([]domain.FuelLog, int64, error)
-	// Summarize aggregates fuel logs, scoped like List when driverUserID is set.
-	Summarize(ctx context.Context, driverUserID *string) (domain.FuelLogSummary, error)
 	// GetByID returns a single fuel log. When driverUserID is non-nil the
 	// lookup is constrained to fuel logs on an ambulance the user is the
 	// active driver of.
