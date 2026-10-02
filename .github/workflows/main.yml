@@ -120,11 +120,18 @@ jobs:
             # Pull latest images (app from registry; infra from Docker Hub)
             docker compose -p ems-back pull
 
-            # Recreate containers with new images; volumes are preserved (no down -v)
-            docker compose -p ems-back up -d --no-build --force-recreate
+            # Start infra without force-recreating it. Restarting postgres on every
+            # deploy made it briefly report unhealthy, which aborted `up` (and so
+            # skipped migrations). It is only recreated when its image/config changes.
+            docker compose -p ems-back up -d --no-build postgres redis
 
-            # Run migrations (migrate service waits for postgres healthy via depends_on)
+            # Migrate before the new app starts so it never runs against an old
+            # schema; if this fails the previous app keeps running.
             docker compose -p ems-back run --rm migrate
+
+            # Recreate the app containers on the new image (dependencies are not
+            # force-recreated; volumes are preserved).
+            docker compose -p ems-back up -d --no-build --force-recreate app worker
 
             # Clean up unused images
             docker image prune -f
