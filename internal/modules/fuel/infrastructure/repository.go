@@ -242,6 +242,115 @@ LIMIT $%d OFFSET $%d
 	return items, total, rows.Err()
 }
 
+// Summarize aggregates fuel logs for the fuel board. Every query applies the
+// same driver scope as List so a driver only sees their own ambulances.
+func (r *Repository) Summarize(ctx context.Context, driverUserID *string) (domain.FuelLogSummary, error) {
+	out := domain.FuelLogSummary{
+		FuelTypes:   make([]domain.FuelTypeCount, 0),
+		Weekly:      make([]domain.FuelWeek, 0, 12),
+		FundingBurn: make([]domain.FundingBurn, 0),
+	}
+	scope, args := driverScope(driverUserID, 1)
+
+	const recent = `fl.filled_at >= now() - interval '30 days'`
+	const previous = `fl.filled_at >= now() - interval '60 days' AND fl.filled_at < now() - interval '30 days'`
+	if err := r.db.QueryRow(ctx, `
+		SELECT
+			COUNT(1),
+			COUNT(1) FILTER (WHERE NOT fl.dispense_confirmed),
+			COUNT(1) FILTER (WHERE fl.dispense_confirmed),
+			COUNT(1) FILTER (WHERE NOT fl.dispense_confirmed AND fl.filled_at < now() - interval '24 hours'),
+			MIN(fl.filled_at) FILTER (WHERE NOT fl.dispense_confirmed),
+			COUNT(1) FILTER (WHERE `+recent+`),
+			COALESCE(SUM(fl.liters) FILTER (WHERE `+recent+`), 0)::float8,
+			COALESCE(SUM(fl.cost) FILTER (WHERE `+recent+`), 0)::float8,
+			COALESCE(SUM(fl.liters) FILTER (WHERE `+recent+` AND fl.cost IS NOT NULL), 0)::float8,
+			COUNT(1) FILTER (WHERE `+previous+`),
+			COALESCE(SUM(fl.liters) FILTER (WHERE `+previous+`), 0)::float8,
+			COALESCE(SUM(fl.cost) FILTER (WHERE `+previous+`), 0)::float8,
+			COALESCE(SUM(fl.liters) FILTER (WHERE `+previous+` AND fl.cost IS NOT NULL), 0)::float8
+		FROM fuel_logs fl
+		WHERE `+scope, args...).Scan(
+		&out.Total, &out.Pending, &out.Confirmed, &out.PendingOverdue, &out.OldestPendingAt,
+		&out.Recent.Logs, &out.Recent.Liters, &out.Recent.Cost, &out.Recent.PricedLiters,
+		&out.Previous.Logs, &out.Previous.Liters, &out.Previous.Cost, &out.Previous.PricedLiters,
+	); err != nil {
+		return out, err
+	}
+
+	// Fuel types are free text, so group case-insensitively; blanks are skipped.
+	rows, err := r.db.Query(ctx, `
+		SELECT INITCAP(LOWER(TRIM(fl.fuel_type))), COUNT(1)
+		FROM fuel_logs fl
+		WHERE NULLIF(TRIM(fl.fuel_type), '') IS NOT NULL AND `+scope+`
+		GROUP BY 1
+		ORDER BY 2 DESC, 1`, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var ft domain.FuelTypeCount
+		if err := rows.Scan(&ft.FuelType, &ft.Count); err != nil {
+			return out, err
+		}
+		out.FuelTypes = append(out.FuelTypes, ft)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	// The week series is generated so weeks with no logs still appear.
+	rows, err = r.db.Query(ctx, `
+		SELECT w.week_start, COUNT(fl.id),
+			COALESCE(SUM(fl.liters), 0)::float8,
+			COALESCE(SUM(fl.cost), 0)::float8
+		FROM generate_series(
+			date_trunc('week', now()) - interval '11 weeks',
+			date_trunc('week', now()),
+			interval '1 week'
+		) AS w(week_start)
+		LEFT JOIN fuel_logs fl
+			ON fl.filled_at >= w.week_start
+			AND fl.filled_at < w.week_start + interval '1 week'
+			AND `+scope+`
+		GROUP BY w.week_start
+		ORDER BY w.week_start`, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var wk domain.FuelWeek
+		if err := rows.Scan(&wk.WeekStart, &wk.Logs, &wk.Liters, &wk.Cost); err != nil {
+			return out, err
+		}
+		out.Weekly = append(out.Weekly, wk)
+	}
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	rows, err = r.db.Query(ctx, `
+		SELECT fl.funding_source_id::text, COALESCE(SUM(fl.cost), 0)::float8
+		FROM fuel_logs fl
+		WHERE fl.funding_source_id IS NOT NULL AND `+recent+` AND `+scope+`
+		GROUP BY fl.funding_source_id
+		ORDER BY 2 DESC`, args...)
+	if err != nil {
+		return out, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var fb domain.FundingBurn
+		if err := rows.Scan(&fb.FundingSourceID, &fb.Cost30d); err != nil {
+			return out, err
+		}
+		out.FundingBurn = append(out.FundingBurn, fb)
+	}
+	return out, rows.Err()
+}
+
 func (r *Repository) GetByID(ctx context.Context, id string, driverUserID *string) (domain.FuelLog, error) {
 	if driverUserID != nil && *driverUserID != "" {
 		q := fmt.Sprintf(`SELECT%s FROM fuel_logs fl
